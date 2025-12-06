@@ -1,0 +1,101 @@
+/**
+ * タスク管理アプリ - スタイルシート
+ */
+
+body {
+    background-color: #f8f9fa;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.container {
+    max-width: 800px;
+}
+
+.card {
+    border: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 1px solid #dee2e6;
+    font-weight: 600;
+}
+
+.task-item {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.task-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.task-item .card-body {
+    padding: 1rem;
+}
+
+.task-item .card-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #212529;
+}
+
+.task-item .badge {
+    font-size: 0.75rem;
+    padding: 0.35em 0.65em;
+}
+
+.task-item .btn-sm {
+    margin-left: 0.5rem;
+}
+
+/* レスポンシブ対応 */
+@media (max-width: 576px) {
+    .container {
+        padding: 0 1rem;
+    }
+
+    .task-item .d-flex {
+        flex-direction: column;
+    }
+
+    .task-item .btn-sm {
+        margin-left: 0;
+        margin-top: 0.5rem;
+        width: 100%;
+    }
+}
+
+/* ローディングアニメーション */
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
+
+/* アラートのスタイル */
+#alert-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1050;
+    max-width: 400px;
+}
+
+@media (max-width: 576px) {
+    #alert-container {
+        left: 10px;
+        right: 10px;
+        max-width: none;
+    }
+}
+
+/* PWA用のスタイル */
+@media (display-mode: standalone) {
+    body {
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+}
+
