@@ -1,47 +1,43 @@
-# Notion連携アプリ
+# My AWS Apps
 
-このアプリケーションはNotion APIを使用してNotionデータベースに接続し、データを取得・表示できます。
+AWS環境で開発する各種アプリケーションを管理するリポジトリです。
 
-## セットアップ方法
+## プロジェクト構成
 
-### 1. Notion Integrationの作成
+```
+my-aws-apps/
+├── apps/
+│   ├── notion-integration/     # Notion連携アプリ
+│   ├── task-management/        # タスク管理アプリ（開発予定）
+│   └── [今後追加するアプリ]/
+├── infrastructure/              # 共通のAWS設定（必要に応じて）
+└── README.md
+```
 
-1. [Notion Integrations](https://www.notion.so/my-integrations) にアクセス
-2. 「+ New integration」をクリック
-3. 名前を入力してIntegrationを作成
-4. 「Internal Integration Token」をコピー（`secret_`で始まる文字列）
+## 各アプリケーション
 
-### 2. Notionデータベースの共有設定
+### Notion連携アプリ
+Notion APIを使用してNotionデータベースに接続し、データを取得・表示するアプリケーション。
 
-1. Notionでデータベースを開く
-2. 右上の「...」メニューから「Connections」を選択
-3. 作成したIntegrationを選択して接続
+詳細は [apps/notion-integration/README.md](./apps/notion-integration/README.md) を参照してください。
 
-### 3. データベースIDの取得
+### タスク管理アプリ
+AWS環境で開発するタスク管理アプリケーション（開発予定）
 
-1. NotionデータベースのURLをコピー
-2. URLは以下の形式: `https://www.notion.so/workspace/DATABASE_ID?v=...`
-3. `DATABASE_ID`の部分（32文字）をコピー
+## 開発ガイドライン
 
-### 4. アプリの使用
+### 新しいアプリを追加する場合
 
-1. `index.html`をブラウザで開く
-2. 「Notion API キー」欄にIntegration Tokenを入力
-3. 「接続」ボタンをクリック
-4. 「データベースID」欄にデータベースIDを入力
-5. 「データベースを読み込む」ボタンをクリック
+1. `apps/` ディレクトリに新しいフォルダを作成
+2. アプリ固有のREADME.mdを作成
+3. 必要に応じて共通のインフラ設定を `infrastructure/` に追加
 
-## 機能
+### ブランチ戦略
 
-- Notion APIキーによる認証
-- データベースのクエリ
-- ページ情報の取得
-- 各種プロパティタイプの表示対応
+- `main`: 安定版
+- `feature/[アプリ名]-[機能名]`: 新機能開発
+- `bugfix/[アプリ名]-[問題]`: バグ修正
 
-## 注意事項
+## ライセンス
 
-- APIキーはブラウザのローカルストレージに保存されます
-- 本番環境では、APIキーをフロントエンドに直接保存しないことを推奨します
-- CORSエラーが発生する場合は、バックエンドサーバーを使用してください
-
-
+各アプリケーションのライセンスは、それぞれのディレクトリ内のLICENSEファイルを参照してください。
