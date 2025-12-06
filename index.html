@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notion連携アプリ</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Notion連携</h1>
+        </header>
+
+        <section class="connection-section">
+            <h2>接続設定</h2>
+            <div class="connection-form">
+                <label for="api-key-input">Notion API キー:</label>
+                <input 
+                    type="password" 
+                    id="api-key-input" 
+                    placeholder="secret_..." 
+                    class="input-field"
+                >
+                <div class="button-group">
+                    <button onclick="notionUI.connect(document.getElementById('api-key-input').value)" class="btn btn-primary">
+                        接続テスト
+                    </button>
+                    <button onclick="notionUI.disconnect()" class="btn btn-secondary">
+                        切断
+                    </button>
+                </div>
+                <div class="status-container">
+                    <span id="connection-status" class="status disconnected">未接続</span>
+                </div>
+                <p class="help-text">ページを開くと自動で接続テストを実行します</p>
+            </div>
+        </section>
+
+        <section id="notion-controls" class="notion-controls" style="display: none;">
+            <h2>データベース操作</h2>
+            <div class="database-form">
+                <label for="database-url-input">データベースURLまたはID:</label>
+                <input 
+                    type="text" 
+                    id="database-url-input" 
+                    placeholder="Notion URLまたはデータベースIDを入力" 
+                    class="input-field"
+                    value="https://www.notion.so/fantamstick/2a924e2ab5e9813f9cfac90cfa2041a1?v=2ab24e2ab5e980cf8aaf000cced17c32"
+                >
+                <div class="button-group">
+                    <button onclick="notionUI.checkDatabaseStructure(document.getElementById('database-url-input').value)" class="btn btn-primary">
+                        構造を確認
+                    </button>
+                    <button onclick="notionUI.loadDatabase()" class="btn btn-secondary">
+                        データを読み込む
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section id="results" class="results">
+            <!-- 結果がここに表示されます -->
+        </section>
+    </div>
+
+    <script src="notion.js"></script>
+</body>
+</html>
