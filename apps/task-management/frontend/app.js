@@ -8,7 +8,7 @@
 
 // APIエンドポイントの設定
 // 本番環境では環境変数や設定ファイルから読み込むことを推奨
-const API_BASE_URL = window.API_BASE_URL || 'https://YOUR_API_GATEWAY_URL.execute-api.ap-northeast-1.amazonaws.com/prod';
+const API_BASE_URL = window.API_BASE_URL || 'https://c060m18l73.execute-api.ap-northeast-1.amazonaws.com/prod';
 
 // 認証トークン（Cognito認証実装時に使用）
 // const AUTH_TOKEN = localStorage.getItem('authToken');
@@ -42,7 +42,23 @@ async function callAPI(method, path, body = null) {
       return {};
     }
 
-    const data = await response.json();
+    // Content-Typeを確認してJSONかどうか判断
+    const contentType = response.headers.get('content-type');
+    let data;
+    
+    if (contentType && contentType.includes('application/json')) {
+      const text = await response.text();
+      try {
+        data = JSON.parse(text);
+      } catch (parseError) {
+        // JSONパースエラーの場合
+        throw new Error(`Invalid JSON response: ${text.substring(0, 100)}`);
+      }
+    } else {
+      // JSON以外のレスポンスの場合
+      const text = await response.text();
+      throw new Error(`Expected JSON but got ${contentType || 'unknown'}: ${text.substring(0, 100)}`);
+    }
 
     if (!response.ok) {
       throw new Error(data.error || `HTTP error! status: ${response.status}`);
@@ -129,12 +145,38 @@ async function displayTasks() {
 
     if (tasks.length === 0) {
       emptyMessage.classList.remove('d-none');
+      tasksContainer.innerHTML = '';
       return;
     }
 
+    // テーブルヘッダーを作成（まだ存在しない場合）
+    if (!tasksContainer.querySelector('table')) {
+      const table = document.createElement('table');
+      table.className = 'table table-hover table-striped';
+      table.innerHTML = `
+        <thead class="table-light">
+          <tr>
+            <th style="width: 150px; min-width: 150px; max-width: 150px;">タイトル</th>
+            <th style="width: 180px; min-width: 180px; max-width: 180px;">説明</th>
+            <th style="width: 90px; min-width: 90px; max-width: 90px;">期日</th>
+            <th style="width: 80px; min-width: 80px; max-width: 80px;">ステータス</th>
+            <th style="width: 120px; min-width: 120px; max-width: 120px;">作成日時</th>
+            <th style="width: 120px; min-width: 120px; max-width: 120px;">更新日時</th>
+            <th style="width: 160px; min-width: 160px; max-width: 160px;">操作</th>
+          </tr>
+        </thead>
+        <tbody id="tasks-tbody">
+        </tbody>
+      `;
+      tasksContainer.appendChild(table);
+    }
+
+    const tbody = tasksContainer.querySelector('#tasks-tbody');
+    tbody.innerHTML = '';
+
     tasks.forEach(task => {
       const taskElement = createTaskElement(task);
-      tasksContainer.appendChild(taskElement);
+      tbody.appendChild(taskElement);
     });
 
   } catch (error) {
@@ -145,90 +187,167 @@ async function displayTasks() {
 }
 
 /**
- * タスク要素を作成
+ * タスク要素を作成（テーブル行として）
  */
 function createTaskElement(task) {
-  const div = document.createElement('div');
-  div.className = 'task-item card mb-3';
-  div.dataset.taskId = task.taskId;
+  const tr = document.createElement('tr');
+  tr.className = 'task-row';
+  tr.dataset.taskId = task.taskId;
 
   const statusBadge = task.status === 'done' 
     ? '<span class="badge bg-success">完了</span>' 
     : '<span class="badge bg-warning">未完了</span>';
 
+  // タイトルの全文をtitle属性に設定（ツールチップ用）
+  const titleFullText = escapeHtml(task.title);
+  const titleDisplay = task.title.length > 20 ? task.title.substring(0, 20) + '...' : task.title;
+
   const dueDateDisplay = task.dueDate 
-    ? `<small class="text-muted">期日: ${formatDate(task.dueDate)}</small>` 
-    : '';
+    ? formatDate(task.dueDate)
+    : '<span class="text-muted">-</span>';
 
+  // 説明の全文をtitle属性に設定（ツールチップ用）
+  const descriptionFullText = task.description ? escapeHtml(task.description) : '';
   const descriptionDisplay = task.description 
-    ? `<p class="card-text text-muted">${escapeHtml(task.description)}</p>` 
-    : '';
+    ? (task.description.length > 30 ? task.description.substring(0, 30) + '...' : task.description)
+    : '<span class="text-muted">-</span>';
 
-  div.innerHTML = `
-    <div class="card-body">
-      <div class="d-flex justify-content-between align-items-start mb-2">
-        <h5 class="card-title mb-0">${escapeHtml(task.title)}</h5>
-        ${statusBadge}
+  tr.innerHTML = `
+    <td class="align-middle task-title-cell" title="${titleFullText}">
+      <strong class="task-title-text">${escapeHtml(titleDisplay)}</strong>
+    </td>
+    <td class="align-middle task-description-cell" title="${descriptionFullText}">
+      <div class="task-description-text">
+        ${task.description ? escapeHtml(descriptionDisplay) : '<span class="text-muted">-</span>'}
       </div>
-      ${descriptionDisplay}
-      <div class="d-flex justify-content-between align-items-center mt-2">
-        <div>
-          ${dueDateDisplay}
-          <small class="text-muted d-block">作成: ${formatDateTime(task.createdAt)}</small>
-          <small class="text-muted d-block">更新: ${formatDateTime(task.updatedAt)}</small>
-        </div>
-        <div>
-          <button class="btn btn-sm btn-outline-primary edit-btn" data-task-id="${task.taskId}">
-            編集
-          </button>
-          <button class="btn btn-sm btn-outline-danger delete-btn" data-task-id="${task.taskId}">
-            削除
-          </button>
-        </div>
+    </td>
+    <td class="align-middle">
+      ${dueDateDisplay}
+    </td>
+    <td class="align-middle">
+      ${statusBadge}
+    </td>
+    <td class="align-middle">
+      <small class="text-muted datetime-cell">${formatDateTime(task.createdAt)}</small>
+    </td>
+    <td class="align-middle">
+      <small class="text-muted datetime-cell">${formatDateTime(task.updatedAt)}</small>
+    </td>
+    <td class="align-middle">
+      <div class="btn-group btn-group-sm" role="group">
+        <button class="btn btn-outline-primary edit-btn" data-task-id="${task.taskId}" title="編集">
+          編集
+        </button>
+        ${task.status === 'done' 
+          ? `<button class="btn btn-outline-warning toggle-status-btn" data-task-id="${task.taskId}" data-current-status="${task.status}" title="未完了に戻す">
+              未完了
+            </button>`
+          : `<button class="btn btn-outline-success toggle-status-btn" data-task-id="${task.taskId}" data-current-status="${task.status}" title="完了にする">
+              完了
+            </button>`
+        }
+        <button class="btn btn-outline-danger delete-btn" data-task-id="${task.taskId}" title="削除">
+          削除
+        </button>
       </div>
-    </div>
+    </td>
   `;
 
   // 編集ボタンのイベントリスナー
-  const editBtn = div.querySelector('.edit-btn');
-  editBtn.addEventListener('click', () => editTask(task));
+  const editBtn = tr.querySelector('.edit-btn');
+  editBtn.addEventListener('click', () => openEditModal(task));
+
+  // ステータス切り替えボタンのイベントリスナー
+  const toggleStatusBtn = tr.querySelector('.toggle-status-btn');
+  if (toggleStatusBtn) {
+    toggleStatusBtn.addEventListener('click', () => toggleTaskStatus(task.taskId, task.status === 'done' ? 'todo' : 'done'));
+  }
 
   // 削除ボタンのイベントリスナー
-  const deleteBtn = div.querySelector('.delete-btn');
+  const deleteBtn = tr.querySelector('.delete-btn');
   deleteBtn.addEventListener('click', () => confirmDeleteTask(task.taskId, task.title));
 
-  return div;
+  return tr;
 }
 
 /**
- * タスク編集
+ * 編集モーダルを開く
  */
-async function editTask(task) {
-  // モーダルまたはインライン編集を実装
-  // ここでは簡易的にプロンプトで実装
-  const newTitle = prompt('タイトルを編集:', task.title);
-  if (newTitle === null) return;
+function openEditModal(task) {
+  // フォームに現在の値を設定
+  document.getElementById('edit-task-id').value = task.taskId;
+  document.getElementById('edit-title').value = task.title;
+  document.getElementById('edit-description').value = task.description || '';
+  document.getElementById('edit-dueDate').value = task.dueDate || '';
+  document.getElementById('edit-status').value = task.status;
 
-  const newDescription = prompt('説明を編集:', task.description || '');
-  if (newDescription === null) return;
+  // モーダルを表示
+  const modal = new bootstrap.Modal(document.getElementById('editTaskModal'));
+  modal.show();
+}
 
-  const newDueDate = prompt('期日を編集 (YYYY-MM-DD):', task.dueDate || '');
-  if (newDueDate === null) return;
+/**
+ * タスク編集を保存
+ */
+async function saveTaskEdit() {
+  const taskId = document.getElementById('edit-task-id').value;
+  const title = document.getElementById('edit-title').value;
+  const description = document.getElementById('edit-description').value;
+  const dueDate = document.getElementById('edit-dueDate').value;
+  const status = document.getElementById('edit-status').value;
 
-  const newStatus = confirm('タスクを完了済みにしますか？') ? 'done' : 'todo';
+  if (!title || title.trim().length === 0) {
+    showAlert('タイトルは必須です', 'danger');
+    return;
+  }
+
+  const saveBtn = document.getElementById('save-edit-btn');
+  const spinner = document.getElementById('edit-spinner');
+  
+  saveBtn.disabled = true;
+  spinner.classList.remove('d-none');
 
   try {
-    await updateTask(task.taskId, {
-      title: newTitle,
-      description: newDescription,
-      dueDate: newDueDate || null,
-      status: newStatus
+    await updateTask(taskId, {
+      title: title.trim(),
+      description: description.trim(),
+      dueDate: dueDate || null,
+      status: status
     });
+
+    // モーダルを閉じる
+    const modal = bootstrap.Modal.getInstance(document.getElementById('editTaskModal'));
+    modal.hide();
 
     showAlert('タスクを更新しました', 'success');
     displayTasks();
   } catch (error) {
     showAlert(`タスクの更新に失敗しました: ${error.message}`, 'danger');
+  } finally {
+    saveBtn.disabled = false;
+    spinner.classList.add('d-none');
+  }
+}
+
+/**
+ * タスクのステータスを切り替え（完了/未完了）
+ */
+async function toggleTaskStatus(taskId, newStatus) {
+  const statusText = newStatus === 'done' ? '完了' : '未完了';
+  
+  if (!confirm(`タスクを「${statusText}」に変更しますか？`)) {
+    return;
+  }
+
+  try {
+    await updateTask(taskId, {
+      status: newStatus
+    });
+
+    showAlert(`タスクを「${statusText}」に変更しました`, 'success');
+    displayTasks();
+  } catch (error) {
+    showAlert(`ステータスの変更に失敗しました: ${error.message}`, 'danger');
   }
 }
 
@@ -313,6 +432,13 @@ document.getElementById('task-form').addEventListener('submit', async (e) => {
  */
 document.getElementById('refresh-btn').addEventListener('click', () => {
   displayTasks();
+});
+
+/**
+ * 編集フォームの保存ボタンイベント
+ */
+document.getElementById('save-edit-btn').addEventListener('click', () => {
+  saveTaskEdit();
 });
 
 /**

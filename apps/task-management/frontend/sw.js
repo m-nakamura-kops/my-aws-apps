@@ -72,20 +72,16 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // APIリクエストは常にネットワークを使用（キャッシュしない）
-  if (url.pathname.startsWith('/tasks') || url.pathname.includes('api')) {
-    event.respondWith(
-      fetch(request).catch(() => {
-        // オフライン時はエラーメッセージを返す
-        return new Response(
-          JSON.stringify({ error: 'オフラインです。ネットワーク接続を確認してください。' }),
-          {
-            status: 503,
-            headers: { 'Content-Type': 'application/json' }
-          }
-        );
-      })
-    );
+  // API GatewayへのリクエストはService Workerを完全にバイパス
+  // execute-api.amazonaws.com へのすべてのリクエストはそのまま通過
+  if (url.hostname.includes('execute-api.amazonaws.com')) {
+    // Service Workerで処理せず、直接ネットワークに送信
+    return;
+  }
+  
+  // ローカルの/tasksパスへのリクエストも処理しない
+  if (url.pathname.startsWith('/tasks')) {
+    // Service Workerで処理せず、直接ネットワークに送信
     return;
   }
 

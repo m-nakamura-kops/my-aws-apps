@@ -8,7 +8,9 @@ body {
 }
 
 .container {
-    max-width: 800px;
+    max-width: 100%;
+    padding-left: 1%;
+    padding-right: 1%;
 }
 
 .card {
@@ -23,48 +25,158 @@ body {
     font-weight: 600;
 }
 
-.task-item {
-    transition: transform 0.2s, box-shadow 0.2s;
+/* タスク追加フォームセクションの左右余白 */
+.task-form-section {
+    margin-left: 15% !important;
+    margin-right: 15% !important;
 }
 
-.task-item:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+@media (max-width: 768px) {
+    .task-form-section {
+        margin-left: 5% !important;
+        margin-right: 5% !important;
+    }
 }
 
-.task-item .card-body {
-    padding: 1rem;
+/* テーブルスタイル */
+.table {
+    margin-bottom: 0;
 }
 
-.task-item .card-title {
-    font-size: 1.1rem;
+.task-row {
+    transition: background-color 0.2s;
+}
+
+.task-row:hover {
+    background-color: #f8f9fa !important;
+}
+
+/* タイトルセルのスタイル */
+.task-title-cell {
+    width: 150px;
+    min-width: 150px;
+    max-width: 150px;
+    overflow: hidden;
+}
+
+.task-title-text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+/* 説明セルのスタイル */
+.task-description-cell {
+    width: 180px;
+    min-width: 180px;
+    max-width: 180px;
+    overflow: hidden;
+}
+
+.task-description-text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.table {
+    table-layout: fixed;
+    width: 100%;
+}
+
+.table th {
     font-weight: 600;
-    color: #212529;
+    border-bottom: 2px solid #dee2e6;
+    font-size: 0.85rem;
+    padding: 0.6rem 0.4rem;
 }
 
-.task-item .badge {
+.table td {
+    vertical-align: middle;
+    padding: 0.6rem 0.4rem;
+    font-size: 0.85rem;
+}
+
+.btn-group-sm .btn {
+    padding: 0.2rem 0.35rem;
     font-size: 0.75rem;
-    padding: 0.35em 0.65em;
+    white-space: nowrap;
 }
 
-.task-item .btn-sm {
-    margin-left: 0.5rem;
+.datetime-cell {
+    font-size: 0.8rem;
+    white-space: nowrap;
 }
 
 /* レスポンシブ対応 */
-@media (max-width: 576px) {
+@media (max-width: 768px) {
     .container {
         padding: 0 1rem;
     }
 
-    .task-item .d-flex {
+    .table {
+        font-size: 0.875rem;
+    }
+
+    .table th,
+    .table td {
+        padding: 0.5rem;
+    }
+
+    .task-title-cell {
+        width: 150px;
+        min-width: 150px;
+        max-width: 150px;
+    }
+
+    .task-title-text {
+        font-size: 0.9rem;
+    }
+
+    .task-description-cell {
+        width: 200px;
+        min-width: 200px;
+        max-width: 200px;
+    }
+
+    .task-description-text {
+        font-size: 0.9rem;
+    }
+
+    .btn-group-sm .btn {
+        padding: 0.2rem 0.4rem;
+        font-size: 0.75rem;
+    }
+}
+
+@media (max-width: 576px) {
+    .table-responsive {
+        display: block;
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .table {
+        font-size: 0.8rem;
+    }
+
+    .table th,
+    .table td {
+        padding: 0.4rem;
+    }
+
+    .btn-group-sm {
         flex-direction: column;
     }
 
-    .task-item .btn-sm {
-        margin-left: 0;
-        margin-top: 0.5rem;
+    .btn-group-sm .btn {
         width: 100%;
+        margin-bottom: 0.25rem;
     }
 }
 
