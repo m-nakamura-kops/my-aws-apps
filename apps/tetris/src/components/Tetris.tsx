@@ -71,13 +71,22 @@ const randomTetromino = (): TetrominoType => {
   return tetrominos[Math.floor(Math.random() * tetrominos.length)];
 };
 
-// テトリミノを回転
+// テトリミノを回転（時計回り90度）
 const rotate = (piece: number[][], direction: number): number[][] => {
-  const rotated = piece.map((_, index) =>
-    piece.map((col) => col[index])
-  );
-  if (direction > 0) return rotated.map((row) => row.reverse());
-  return rotated.reverse();
+  // direction > 0 の場合は時計回り90度回転
+  const rows = piece.length;
+  const cols = piece[0].length;
+  const rotated: number[][] = [];
+  
+  // 転置して各行を反転（時計回り90度回転）
+  for (let x = 0; x < cols; x++) {
+    rotated[x] = [];
+    for (let y = rows - 1; y >= 0; y--) {
+      rotated[x].push(piece[y][x]);
+    }
+  }
+  
+  return rotated;
 };
 
 // テトリミノをボードに配置できるかチェック
