@@ -181,6 +181,27 @@ export default function Tetris() {
   const [isPaused, setIsPaused] = useState(false);
   const [dropTime, setDropTime] = useState<number | null>(null);
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const positionRef = useRef(position);
+  const rotationRef = useRef(rotation);
+  const boardRef = useRef(board);
+  const currentTetrominoRef = useRef(currentTetromino);
+
+  // refを最新の値に同期
+  useEffect(() => {
+    positionRef.current = position;
+  }, [position]);
+
+  useEffect(() => {
+    rotationRef.current = rotation;
+  }, [rotation]);
+
+  useEffect(() => {
+    boardRef.current = board;
+  }, [board]);
+
+  useEffect(() => {
+    currentTetrominoRef.current = currentTetromino;
+  }, [currentTetromino]);
 
   // ハイスコアを読み込み
   useEffect(() => {
@@ -206,35 +227,48 @@ export default function Tetris() {
 
   // テトリミノをドロップ
   const drop = useCallback(() => {
-    if (!currentTetromino || gameOver || isPaused) return;
+    const currentPos = positionRef.current;
+    const currentRot = rotationRef.current;
+    const currentBoard = boardRef.current;
+    const currentPiece = currentTetrominoRef.current;
 
-    const newPosition = { ...position, y: position.y + 1 };
-    if (isValidMove(board, currentTetromino, newPosition, rotation)) {
+    if (!currentPiece || gameOver || isPaused) return;
+
+    const newPosition = { ...currentPos, y: currentPos.y + 1 };
+    if (isValidMove(currentBoard, currentPiece, newPosition, currentRot)) {
       setPosition(newPosition);
     } else {
       // テトリミノを固定
-      const newBoard = placeTetromino(board, currentTetromino, position, rotation);
+      const newBoard = placeTetromino(currentBoard, currentPiece, currentPos, currentRot);
       const { newBoard: clearedBoard, linesCleared } = clearLines(newBoard);
       setBoard(clearedBoard);
 
       if (linesCleared > 0) {
-        const newLines = lines + linesCleared;
-        const newScore = score + linesCleared * 100 * level;
-        const newLevel = Math.floor(newLines / 10) + 1;
-        setLines(newLines);
-        setScore(newScore);
-        setLevel(newLevel);
-
-        // ハイスコアを更新
-        if (newScore > highScore) {
-          setHighScore(newScore);
-          localStorage.setItem('tetris-high-score', newScore.toString());
-        }
+        setLines((prevLines) => {
+          const newLines = prevLines + linesCleared;
+          const newLevel = Math.floor(newLines / 10) + 1;
+          setLevel(newLevel);
+          // スコアも同時に更新（レベル計算に基づく）
+          setScore((prevScore) => {
+            const currentLevel = Math.floor(prevLines / 10) + 1;
+            const newScore = prevScore + linesCleared * 100 * currentLevel;
+            // ハイスコアを更新
+            setHighScore((prevHighScore) => {
+              if (newScore > prevHighScore) {
+                localStorage.setItem('tetris-high-score', newScore.toString());
+                return newScore;
+              }
+              return prevHighScore;
+            });
+            return newScore;
+          });
+          return newLines;
+        });
       }
 
       startNewTetromino();
     }
-  }, [board, currentTetromino, position, rotation, gameOver, isPaused, lines, score, level, highScore, startNewTetromino]);
+  }, [gameOver, isPaused, startNewTetromino]);
 
   // ゲームループ
   useEffect(() => {
