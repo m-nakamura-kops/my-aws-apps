@@ -180,11 +180,15 @@ export default function Tetris() {
   const [gameOver, setGameOver] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [dropTime, setDropTime] = useState<number | null>(null);
+  const [hardDropLocked, setHardDropLocked] = useState(false);
   const gameIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const hardDropTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const positionRef = useRef(position);
   const rotationRef = useRef(rotation);
   const boardRef = useRef(board);
   const currentTetrominoRef = useRef(currentTetromino);
+  const hardDropPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const hardDropLockedRef = useRef(false);
 
   // refを最新の値に同期
   useEffect(() => {
@@ -213,6 +217,15 @@ export default function Tetris() {
 
   // 新しいテトリミノを開始
   const startNewTetromino = useCallback(() => {
+    // ハードドロップのタイマーをクリア
+    if (hardDropTimeoutRef.current) {
+      clearTimeout(hardDropTimeoutRef.current);
+      hardDropTimeoutRef.current = null;
+    }
+    setHardDropLocked(false);
+    hardDropLockedRef.current = false;
+    hardDropPositionRef.current = null;
+
     const newTetromino = nextTetromino;
     setCurrentTetromino(newTetromino);
     setNextTetromino(randomTetromino());
@@ -238,37 +251,25 @@ export default function Tetris() {
     if (isValidMove(currentBoard, currentPiece, newPosition, currentRot)) {
       setPosition(newPosition);
     } else {
-      // テトリミノを固定
-      const newBoard = placeTetromino(currentBoard, currentPiece, currentPos, currentRot);
-      const { newBoard: clearedBoard, linesCleared } = clearLines(newBoard);
-      setBoard(clearedBoard);
-
-      if (linesCleared > 0) {
-        setLines((prevLines) => {
-          const newLines = prevLines + linesCleared;
-          const newLevel = Math.floor(newLines / 10) + 1;
-          setLevel(newLevel);
-          // スコアも同時に更新（レベル計算に基づく）
-          setScore((prevScore) => {
-            const currentLevel = Math.floor(prevLines / 10) + 1;
-            const newScore = prevScore + linesCleared * 100 * currentLevel;
-            // ハイスコアを更新
-            setHighScore((prevHighScore) => {
-              if (newScore > prevHighScore) {
-                localStorage.setItem('tetris-high-score', newScore.toString());
-                return newScore;
-              }
-              return prevHighScore;
-            });
-            return newScore;
-          });
-          return newLines;
-        });
+      // 一番下についた時、1秒間の調整期間を設ける
+      if (!hardDropLockedRef.current) {
+        setHardDropLocked(true);
+        hardDropLockedRef.current = true;
+        hardDropPositionRef.current = currentPos;
+        
+        // 1秒後に固定
+        if (hardDropTimeoutRef.current) {
+          clearTimeout(hardDropTimeoutRef.current);
+        }
+        hardDropTimeoutRef.current = setTimeout(() => {
+          lockHardDroppedPiece();
+        }, 1000);
+      } else {
+        // 既に調整期間中なら即座に固定
+        lockHardDroppedPiece();
       }
-
-      startNewTetromino();
     }
-  }, [gameOver, isPaused, startNewTetromino]);
+  }, [gameOver, isPaused, lockHardDroppedPiece]);
 
   // ゲームループ
   useEffect(() => {
@@ -299,9 +300,23 @@ export default function Tetris() {
     }
   }, [currentTetromino, gameOver, startNewTetromino]);
 
+  // クリーンアップ
+  useEffect(() => {
+    return () => {
+      if (hardDropTimeoutRef.current) {
+        clearTimeout(hardDropTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // 移動処理
   const moveTetromino = (direction: 'left' | 'right' | 'down') => {
     if (!currentTetromino || gameOver || isPaused) return;
+
+    // ハードドロップ後の1秒間は左右移動のみ許可
+    if (hardDropLocked && direction !== 'left' && direction !== 'right') {
+      return;
+    }
 
     let newPosition = { ...position };
     if (direction === 'left') {
@@ -310,6 +325,11 @@ export default function Tetris() {
       newPosition.x += 1;
     } else if (direction === 'down') {
       newPosition.y += 1;
+    }
+
+    // ハードドロップ後の位置調整時は、Y座標を固定
+    if (hardDropLocked && hardDropPositionRef.current) {
+      newPosition.y = hardDropPositionRef.current.y;
     }
 
     if (isValidMove(board, currentTetromino, newPosition, rotation)) {
@@ -322,9 +342,60 @@ export default function Tetris() {
     }
   };
 
+  // ハードドロップ後の固定処理
+  const lockHardDroppedPiece = useCallback(() => {
+    if (!hardDropPositionRef.current) return;
+
+    const finalPos = hardDropPositionRef.current;
+    const currentRot = rotationRef.current;
+    const currentBoard = boardRef.current;
+    const currentPiece = currentTetrominoRef.current;
+
+    if (!currentPiece) return;
+
+    // テトリミノを固定
+    const newBoard = placeTetromino(currentBoard, currentPiece, finalPos, currentRot);
+    const { newBoard: clearedBoard, linesCleared } = clearLines(newBoard);
+    setBoard(clearedBoard);
+
+    if (linesCleared > 0) {
+      setLines((prevLines) => {
+        const newLines = prevLines + linesCleared;
+        const newLevel = Math.floor(newLines / 10) + 1;
+        setLevel(newLevel);
+        // スコアも同時に更新（レベル計算に基づく）
+        setScore((prevScore) => {
+          const currentLevel = Math.floor(prevLines / 10) + 1;
+          const newScore = prevScore + linesCleared * 100 * currentLevel;
+          // ハイスコアを更新
+          setHighScore((prevHighScore) => {
+            if (newScore > prevHighScore) {
+              localStorage.setItem('tetris-high-score', newScore.toString());
+              return newScore;
+            }
+            return prevHighScore;
+          });
+          return newScore;
+        });
+        return newLines;
+      });
+    }
+
+    // 状態をリセット
+    setHardDropLocked(false);
+    hardDropLockedRef.current = false;
+    hardDropPositionRef.current = null;
+    if (hardDropTimeoutRef.current) {
+      clearTimeout(hardDropTimeoutRef.current);
+      hardDropTimeoutRef.current = null;
+    }
+
+    startNewTetromino();
+  }, [startNewTetromino]);
+
   // ハードドロップ（一気に底まで落とす）
   const hardDrop = () => {
-    if (!currentTetromino || gameOver || isPaused) return;
+    if (!currentTetromino || gameOver || isPaused || hardDropLocked) return;
 
     const currentPos = positionRef.current;
     const currentRot = rotationRef.current;
@@ -342,37 +413,19 @@ export default function Tetris() {
     if (dropDistance > 0) {
       setScore((prev) => prev + dropDistance * 2);
       
-      // 位置を設定して即座に固定
+      // 位置を設定（まだ固定しない）
       const finalPosition = { x: currentPos.x, y: dropY };
-      const newBoard = placeTetromino(currentBoard, currentPiece, finalPosition, currentRot);
-      const { newBoard: clearedBoard, linesCleared } = clearLines(newBoard);
-      setBoard(clearedBoard);
       setPosition(finalPosition);
+      hardDropPositionRef.current = finalPosition;
+      setHardDropLocked(true);
 
-      if (linesCleared > 0) {
-        setLines((prevLines) => {
-          const newLines = prevLines + linesCleared;
-          const newLevel = Math.floor(newLines / 10) + 1;
-          setLevel(newLevel);
-          // スコアも同時に更新（レベル計算に基づく）
-          setScore((prevScore) => {
-            const currentLevel = Math.floor(prevLines / 10) + 1;
-            const newScore = prevScore + linesCleared * 100 * currentLevel;
-            // ハイスコアを更新
-            setHighScore((prevHighScore) => {
-              if (newScore > prevHighScore) {
-                localStorage.setItem('tetris-high-score', newScore.toString());
-                return newScore;
-              }
-              return prevHighScore;
-            });
-            return newScore;
-          });
-          return newLines;
-        });
+      // 1秒後に固定
+      if (hardDropTimeoutRef.current) {
+        clearTimeout(hardDropTimeoutRef.current);
       }
-
-      startNewTetromino();
+      hardDropTimeoutRef.current = setTimeout(() => {
+        lockHardDroppedPiece();
+      }, 1000);
     } else {
       // 既に底にいる場合は通常のdrop処理
       drop();
