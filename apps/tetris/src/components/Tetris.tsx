@@ -189,6 +189,7 @@ export default function Tetris() {
   const currentTetrominoRef = useRef(currentTetromino);
   const hardDropPositionRef = useRef<{ x: number; y: number } | null>(null);
   const hardDropLockedRef = useRef(false);
+  const lockHardDroppedPieceRef = useRef<(() => void) | null>(null);
 
   // refを最新の値に同期
   useEffect(() => {
@@ -262,14 +263,18 @@ export default function Tetris() {
           clearTimeout(hardDropTimeoutRef.current);
         }
         hardDropTimeoutRef.current = setTimeout(() => {
-          lockHardDroppedPiece();
+          if (lockHardDroppedPieceRef.current) {
+            lockHardDroppedPieceRef.current();
+          }
         }, 1000);
       } else {
         // 既に調整期間中なら即座に固定
-        lockHardDroppedPiece();
+        if (lockHardDroppedPieceRef.current) {
+          lockHardDroppedPieceRef.current();
+        }
       }
     }
-  }, [gameOver, isPaused, lockHardDroppedPiece]);
+  }, [gameOver, isPaused]);
 
   // ゲームループ
   useEffect(() => {
@@ -318,7 +323,13 @@ export default function Tetris() {
       return;
     }
 
-    let newPosition = { ...position };
+    // ハードドロップ後の位置調整時は、hardDropPositionRefから現在位置を取得
+    let currentPos = position;
+    if (hardDropLocked && hardDropPositionRef.current) {
+      currentPos = hardDropPositionRef.current;
+    }
+
+    let newPosition = { ...currentPos };
     if (direction === 'left') {
       newPosition.x -= 1;
     } else if (direction === 'right') {
@@ -334,6 +345,10 @@ export default function Tetris() {
 
     if (isValidMove(board, currentTetromino, newPosition, rotation)) {
       setPosition(newPosition);
+      // ハードドロップ後の位置調整時は、hardDropPositionRefも更新
+      if (hardDropLocked && hardDropPositionRef.current) {
+        hardDropPositionRef.current = newPosition;
+      }
       if (direction === 'down') {
         setScore((prev) => prev + 1);
       }
@@ -393,6 +408,11 @@ export default function Tetris() {
     startNewTetromino();
   }, [startNewTetromino]);
 
+  // lockHardDroppedPieceをrefに保存
+  useEffect(() => {
+    lockHardDroppedPieceRef.current = lockHardDroppedPiece;
+  }, [lockHardDroppedPiece]);
+
   // ハードドロップ（一気に底まで落とす）
   const hardDrop = () => {
     if (!currentTetromino || gameOver || isPaused || hardDropLocked) return;
@@ -424,7 +444,9 @@ export default function Tetris() {
         clearTimeout(hardDropTimeoutRef.current);
       }
       hardDropTimeoutRef.current = setTimeout(() => {
-        lockHardDroppedPiece();
+        if (lockHardDroppedPieceRef.current) {
+          lockHardDroppedPieceRef.current();
+        }
       }, 1000);
     } else {
       // 既に底にいる場合は通常のdrop処理
