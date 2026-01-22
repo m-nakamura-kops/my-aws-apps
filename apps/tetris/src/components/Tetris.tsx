@@ -581,19 +581,36 @@ export default function Tetris() {
           <div 
             className={`bg-gray-900 p-1 rounded-lg border-2 border-cyan-500 shadow-[0_0_20px_rgba(0,255,255,0.5)] w-full tetris-board ${!gameOver ? 'cursor-pointer' : ''}`}
             style={{ maxHeight: '100%', maxWidth: '100%', aspectRatio: '10/20', flexShrink: 1 }}
-            onClick={() => {
+            onClick={(e) => {
               if (!gameOver) {
                 togglePause();
               }
             }}
-            onTouchStart={(e) => {
+            onTouchEnd={(e) => {
               if (!gameOver) {
                 e.preventDefault();
+                e.stopPropagation();
                 togglePause();
               }
             }}
           >
-            <div className="grid gap-0 w-full h-full" style={{ gridTemplateColumns: `repeat(${BOARD_WIDTH}, 1fr)`, gridTemplateRows: `repeat(${BOARD_HEIGHT}, 1fr)` }}>
+            <div 
+              className="grid gap-0 w-full h-full" 
+              style={{ gridTemplateColumns: `repeat(${BOARD_WIDTH}, 1fr)`, gridTemplateRows: `repeat(${BOARD_HEIGHT}, 1fr)` }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!gameOver) {
+                  togglePause();
+                }
+              }}
+              onTouchEnd={(e) => {
+                e.stopPropagation();
+                if (!gameOver) {
+                  e.preventDefault();
+                  togglePause();
+                }
+              }}
+            >
               {displayBoard.map((row, y) =>
                 row.map((cell, x) => (
                   <div
