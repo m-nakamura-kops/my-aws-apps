@@ -363,7 +363,7 @@ export default function Tetris() {
 
   return (
     <div className="flex flex-col items-center justify-center h-screen bg-black text-cyan-400 p-2 overflow-hidden">
-      <div className="w-full max-w-md h-full flex flex-col justify-between">
+      <div className="w-full max-w-md h-full flex flex-col">
         {/* スコア表示（コンパクト） */}
         <div className="flex justify-between items-center mb-1 text-xs sm:text-sm flex-shrink-0">
           <div className="flex flex-col">
@@ -399,7 +399,7 @@ export default function Tetris() {
         </div>
 
         {/* ゲームボード（サイズ調整） */}
-        <div className="bg-gray-900 p-1 rounded-lg border-2 border-cyan-500 shadow-[0_0_20px_rgba(0,255,255,0.5)] mb-1 flex-shrink-0 flex-grow tetris-board" style={{ minHeight: '200px' }}>
+        <div className="bg-gray-900 p-1 rounded-lg border-2 border-cyan-500 shadow-[0_0_20px_rgba(0,255,255,0.5)] mb-1 flex-shrink-0 flex-grow-0 tetris-board" style={{ maxHeight: 'calc(100vh - 420px)', minHeight: '200px' }}>
           <div className="grid gap-0 h-full" style={{ gridTemplateColumns: `repeat(${BOARD_WIDTH}, 1fr)`, gridTemplateRows: `repeat(${BOARD_HEIGHT}, 1fr)` }}>
             {displayBoard.map((row, y) =>
               row.map((cell, x) => (
@@ -433,14 +433,14 @@ export default function Tetris() {
         )}
 
         {/* スマホ操作用ボタン（コンパクト） */}
-        <div className="space-y-1.5 flex-shrink-0 mt-1">
+        <div className="space-y-1.5 flex-shrink-0 mt-1 pb-1">
           {/* 一時停止ボタン */}
           {!gameOver && (
             <div className="flex justify-center">
               <button
                 onClick={togglePause}
                 disabled={gameOver}
-                className="w-full h-12 sm:h-14 bg-purple-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
+                className="w-full h-11 sm:h-12 bg-purple-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
               >
                 {isPaused ? '▶ 再開' : '⏸ 一時停止'}
               </button>
@@ -452,7 +452,7 @@ export default function Tetris() {
             <button
               onClick={rotateTetromino}
               disabled={gameOver || isPaused}
-              className="w-full h-12 sm:h-14 bg-purple-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
+              className="w-full h-11 sm:h-12 bg-purple-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
             >
               🔄 回転
             </button>
@@ -463,14 +463,14 @@ export default function Tetris() {
             <button
               onClick={() => moveTetromino('left')}
               disabled={gameOver || isPaused}
-              className="flex-1 h-14 sm:h-16 bg-blue-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
+              className="flex-1 h-12 sm:h-14 bg-blue-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
             >
               ← 左
             </button>
             <button
               onClick={() => moveTetromino('right')}
               disabled={gameOver || isPaused}
-              className="flex-1 h-14 sm:h-16 bg-blue-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
+              className="flex-1 h-12 sm:h-14 bg-blue-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
             >
               右 →
             </button>
@@ -481,7 +481,7 @@ export default function Tetris() {
             <button
               onClick={() => moveTetromino('down')}
               disabled={gameOver || isPaused}
-              className="w-full h-14 sm:h-16 bg-green-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-green-400 active:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,255,0,0.8)] touch-manipulation"
+              className="w-full h-12 sm:h-14 bg-green-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-green-400 active:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,255,0,0.8)] touch-manipulation"
             >
               ⬇ 下
             </button>
