@@ -338,9 +338,20 @@ export default function Tetris() {
       newPosition.y += 1;
     }
 
-    // ハードドロップ後の位置調整時は、Y座標を固定
+    // ハードドロップ後の位置調整時は、Y座標を固定し、下に落ちる位置を計算
     if (hardDropLocked && hardDropPositionRef.current) {
-      newPosition.y = hardDropPositionRef.current.y;
+      const currentRot = rotationRef.current;
+      const currentBoard = boardRef.current;
+      const currentPiece = currentTetrominoRef.current;
+      
+      // 左右移動後の位置から、底まで落ちる位置を計算
+      let dropY = newPosition.y;
+      if (currentPiece) {
+        while (isValidMove(currentBoard, currentPiece, { x: newPosition.x, y: dropY + 1 }, currentRot)) {
+          dropY++;
+        }
+      }
+      newPosition.y = dropY;
     }
 
     if (isValidMove(board, currentTetromino, newPosition, rotation)) {
