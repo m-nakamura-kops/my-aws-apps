@@ -363,7 +363,7 @@ export default function Tetris() {
 
   return (
     <div className="flex flex-col items-center justify-center h-screen bg-black text-cyan-400 p-2 overflow-hidden">
-      <div className="w-full max-w-md h-full flex flex-col">
+      <div className="w-full max-w-md h-full flex flex-col justify-between">
         {/* スコア表示（コンパクト） */}
         <div className="flex justify-between items-center mb-1 text-xs sm:text-sm flex-shrink-0">
           <div className="flex flex-col">
@@ -399,7 +399,7 @@ export default function Tetris() {
         </div>
 
         {/* ゲームボード（サイズ調整） */}
-        <div className="bg-gray-900 p-1 rounded-lg border-2 border-cyan-500 shadow-[0_0_20px_rgba(0,255,255,0.5)] mb-1 flex-shrink-0 flex-grow-0 tetris-board" style={{ maxHeight: 'calc(100vh - 360px)', minHeight: '200px' }}>
+        <div className="bg-gray-900 p-1 rounded-lg border-2 border-cyan-500 shadow-[0_0_20px_rgba(0,255,255,0.5)] mb-1 flex-shrink-0 flex-grow tetris-board" style={{ minHeight: '200px' }}>
           <div className="grid gap-0 h-full" style={{ gridTemplateColumns: `repeat(${BOARD_WIDTH}, 1fr)`, gridTemplateRows: `repeat(${BOARD_HEIGHT}, 1fr)` }}>
             {displayBoard.map((row, y) =>
               row.map((cell, x) => (
@@ -417,11 +417,11 @@ export default function Tetris() {
           </div>
         </div>
 
-        {/* ゲームオーバー/一時停止メッセージ */}
-        {(gameOver || isPaused) && (
+        {/* ゲームオーバーメッセージ */}
+        {gameOver && (
           <div className="text-center mb-1 flex-shrink-0">
             <div className="text-xl sm:text-2xl font-bold text-yellow-400 mb-1 drop-shadow-[0_0_10px_rgba(255,255,0,0.8)]">
-              {gameOver ? 'ゲームオーバー' : '一時停止'}
+              ゲームオーバー
             </div>
             <button
               onClick={resetGame}
@@ -432,26 +432,27 @@ export default function Tetris() {
           </div>
         )}
 
-        {/* コントロールボタン */}
-        {!gameOver && (
-          <div className="mb-1 text-center flex-shrink-0">
-            <button
-              onClick={togglePause}
-              className="px-4 py-2 text-sm bg-purple-500 text-white font-bold rounded-lg hover:bg-purple-400 active:bg-purple-600 transition-all shadow-[0_0_15px_rgba(160,0,240,0.6)]"
-            >
-              {isPaused ? '再開' : '一時停止'}
-            </button>
-          </div>
-        )}
-
         {/* スマホ操作用ボタン（コンパクト） */}
-        <div className="space-y-1.5 flex-shrink-0">
+        <div className="space-y-1.5 flex-shrink-0 mt-1">
+          {/* 一時停止ボタン */}
+          {!gameOver && (
+            <div className="flex justify-center">
+              <button
+                onClick={togglePause}
+                disabled={gameOver}
+                className="w-full h-12 sm:h-14 bg-purple-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
+              >
+                {isPaused ? '▶ 再開' : '⏸ 一時停止'}
+              </button>
+            </div>
+          )}
+          
           {/* 回転ボタン */}
           <div className="flex justify-center">
             <button
               onClick={rotateTetromino}
               disabled={gameOver || isPaused}
-              className="w-24 h-12 sm:w-32 sm:h-14 bg-purple-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
+              className="w-full h-12 sm:h-14 bg-purple-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
             >
               🔄 回転
             </button>
