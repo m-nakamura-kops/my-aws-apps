@@ -362,31 +362,54 @@ export default function Tetris() {
     : board;
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-black text-cyan-400 p-4">
-      <div className="w-full max-w-md">
-        {/* スコア表示 */}
-        <div className="flex justify-between items-center mb-4 text-lg">
+    <div className="flex flex-col items-center justify-center h-screen bg-black text-cyan-400 p-2 overflow-hidden">
+      <div className="w-full max-w-md h-full flex flex-col">
+        {/* スコア表示（コンパクト） */}
+        <div className="flex justify-between items-center mb-1 text-xs sm:text-sm flex-shrink-0">
           <div className="flex flex-col">
             <div className="text-cyan-300">スコア: <span className="text-yellow-400 font-bold">{score}</span></div>
-            <div className="text-cyan-300">ハイスコア: <span className="text-yellow-400 font-bold">{highScore}</span></div>
+            <div className="text-cyan-300">ハイ: <span className="text-yellow-400 font-bold">{highScore}</span></div>
           </div>
           <div className="flex flex-col text-right">
-            <div className="text-cyan-300">レベル: <span className="text-yellow-400 font-bold">{level}</span></div>
-            <div className="text-cyan-300">ライン: <span className="text-yellow-400 font-bold">{lines}</span></div>
+            <div className="text-cyan-300">Lv: <span className="text-yellow-400 font-bold">{level}</span></div>
+            <div className="text-cyan-300">線: <span className="text-yellow-400 font-bold">{lines}</span></div>
+          </div>
+          {/* 次のピース表示（右上に配置） */}
+          <div className="flex flex-col items-center">
+            <div className="text-cyan-300 text-xs mb-1">次</div>
+            <div className="bg-gray-900 p-1 rounded border border-cyan-500">
+              {nextTetromino && (
+                <div className="grid gap-0.5" style={{ gridTemplateColumns: `repeat(${TETROMINOS[nextTetromino].shape[0].length}, 1fr)` }}>
+                  {TETROMINOS[nextTetromino].shape.map((row, y) =>
+                    row.map((cell, x) => (
+                      <div
+                        key={`next-${y}-${x}`}
+                        className="w-2 h-2 sm:w-3 sm:h-3"
+                        style={{
+                          backgroundColor: cell ? TETROMINOS[nextTetromino].color : 'transparent',
+                          border: cell ? `1px solid ${TETROMINOS[nextTetromino].color}` : 'none',
+                        }}
+                      />
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* ゲームボード */}
-        <div className="bg-gray-900 p-2 rounded-lg border-2 border-cyan-500 shadow-[0_0_20px_rgba(0,255,255,0.5)] mb-4">
-          <div className="grid gap-0" style={{ gridTemplateColumns: `repeat(${BOARD_WIDTH}, 1fr)` }}>
+        {/* ゲームボード（サイズ調整） */}
+        <div className="bg-gray-900 p-1 rounded-lg border-2 border-cyan-500 shadow-[0_0_20px_rgba(0,255,255,0.5)] mb-1 flex-shrink-0 flex-grow-0 tetris-board" style={{ maxHeight: 'calc(100vh - 360px)', minHeight: '200px' }}>
+          <div className="grid gap-0 h-full" style={{ gridTemplateColumns: `repeat(${BOARD_WIDTH}, 1fr)`, gridTemplateRows: `repeat(${BOARD_HEIGHT}, 1fr)` }}>
             {displayBoard.map((row, y) =>
               row.map((cell, x) => (
                 <div
                   key={`${y}-${x}`}
-                  className="aspect-square border border-gray-800"
+                  className="border border-gray-800"
                   style={{
                     backgroundColor: cell === 0 ? '#000000' : (cell as string),
                     boxShadow: cell !== 0 ? `0_0_10px_${cell}` : 'none',
+                    aspectRatio: '1',
                   }}
                 />
               ))
@@ -394,38 +417,15 @@ export default function Tetris() {
           </div>
         </div>
 
-        {/* 次のテトリミノ表示 */}
-        <div className="mb-4 text-center">
-          <div className="text-cyan-300 mb-2">次のピース:</div>
-          <div className="bg-gray-900 p-2 rounded-lg border border-cyan-500 inline-block">
-            {nextTetromino && (
-              <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${TETROMINOS[nextTetromino].shape[0].length}, 1fr)` }}>
-                {TETROMINOS[nextTetromino].shape.map((row, y) =>
-                  row.map((cell, x) => (
-                    <div
-                      key={`next-${y}-${x}`}
-                      className="w-4 h-4"
-                      style={{
-                        backgroundColor: cell ? TETROMINOS[nextTetromino].color : 'transparent',
-                        border: cell ? `1px solid ${TETROMINOS[nextTetromino].color}` : 'none',
-                      }}
-                    />
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* ゲームオーバー/一時停止メッセージ */}
         {(gameOver || isPaused) && (
-          <div className="text-center mb-4">
-            <div className="text-3xl font-bold text-yellow-400 mb-2 drop-shadow-[0_0_10px_rgba(255,255,0,0.8)]">
+          <div className="text-center mb-1 flex-shrink-0">
+            <div className="text-xl sm:text-2xl font-bold text-yellow-400 mb-1 drop-shadow-[0_0_10px_rgba(255,255,0,0.8)]">
               {gameOver ? 'ゲームオーバー' : '一時停止'}
             </div>
             <button
               onClick={resetGame}
-              className="px-6 py-3 bg-cyan-500 text-black font-bold rounded-lg hover:bg-cyan-400 active:bg-cyan-600 transition-all shadow-[0_0_15px_rgba(0,255,255,0.6)]"
+              className="px-4 py-2 text-sm bg-cyan-500 text-black font-bold rounded-lg hover:bg-cyan-400 active:bg-cyan-600 transition-all shadow-[0_0_15px_rgba(0,255,255,0.6)]"
             >
               新しいゲーム
             </button>
@@ -434,42 +434,42 @@ export default function Tetris() {
 
         {/* コントロールボタン */}
         {!gameOver && (
-          <div className="mb-4 text-center">
+          <div className="mb-1 text-center flex-shrink-0">
             <button
               onClick={togglePause}
-              className="px-6 py-3 bg-purple-500 text-white font-bold rounded-lg hover:bg-purple-400 active:bg-purple-600 transition-all shadow-[0_0_15px_rgba(160,0,240,0.6)] mb-4"
+              className="px-4 py-2 text-sm bg-purple-500 text-white font-bold rounded-lg hover:bg-purple-400 active:bg-purple-600 transition-all shadow-[0_0_15px_rgba(160,0,240,0.6)]"
             >
               {isPaused ? '再開' : '一時停止'}
             </button>
           </div>
         )}
 
-        {/* スマホ操作用ボタン */}
-        <div className="space-y-3">
+        {/* スマホ操作用ボタン（コンパクト） */}
+        <div className="space-y-1.5 flex-shrink-0">
           {/* 回転ボタン */}
           <div className="flex justify-center">
             <button
               onClick={rotateTetromino}
               disabled={gameOver || isPaused}
-              className="w-32 h-16 bg-purple-500 text-white font-bold text-xl rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
+              className="w-24 h-12 sm:w-32 sm:h-14 bg-purple-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
             >
               🔄 回転
             </button>
           </div>
 
           {/* 左右ボタン */}
-          <div className="flex justify-between gap-4">
+          <div className="flex justify-between gap-2">
             <button
               onClick={() => moveTetromino('left')}
               disabled={gameOver || isPaused}
-              className="flex-1 h-20 bg-blue-500 text-white font-bold text-xl rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
+              className="flex-1 h-14 sm:h-16 bg-blue-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
             >
               ← 左
             </button>
             <button
               onClick={() => moveTetromino('right')}
               disabled={gameOver || isPaused}
-              className="flex-1 h-20 bg-blue-500 text-white font-bold text-xl rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
+              className="flex-1 h-14 sm:h-16 bg-blue-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
             >
               右 →
             </button>
@@ -480,7 +480,7 @@ export default function Tetris() {
             <button
               onClick={() => moveTetromino('down')}
               disabled={gameOver || isPaused}
-              className="w-full h-20 bg-green-500 text-white font-bold text-xl rounded-lg hover:bg-green-400 active:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,255,0,0.8)] touch-manipulation"
+              className="w-full h-14 sm:h-16 bg-green-500 text-white font-bold text-sm sm:text-lg rounded-lg hover:bg-green-400 active:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,255,0,0.8)] touch-manipulation"
             >
               ⬇ 下
             </button>
