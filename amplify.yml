@@ -21,7 +21,10 @@ frontend:
       commands:
         - |
           if [ -z "$AMPLIFY_MONOREPO_APP_ROOT" ]; then
+            echo "AMPLIFY_MONOREPO_APP_ROOT not set, changing to apps/tetris"
             cd apps/tetris
+          else
+            echo "AMPLIFY_MONOREPO_APP_ROOT is set, already in correct directory"
           fi
         - echo "Building Next.js app..."
         - npm run build
