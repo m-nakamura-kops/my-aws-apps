@@ -9,13 +9,9 @@ frontend:
       commands:
         - npm run build
   artifacts:
-    baseDirectory: apps/tetris
+    baseDirectory: apps/tetris/.next
     files:
-      - '.next/**/*'
-      - 'public/**/*'
-      - 'package.json'
-      - 'next.config.ts'
-      - 'node_modules/**/*'
+      - '**/*'
   cache:
     paths:
       - apps/tetris/node_modules/**/*
