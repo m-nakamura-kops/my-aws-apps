@@ -1,0 +1,22 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - cd apps/tetris
+        - npm ci
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    baseDirectory: apps/tetris
+    files:
+      - '.next/**/*'
+      - 'public/**/*'
+      - 'package.json'
+      - 'next.config.ts'
+      - 'node_modules/**/*'
+  cache:
+    paths:
+      - apps/tetris/node_modules/**/*
+      - apps/tetris/.next/cache/**/*

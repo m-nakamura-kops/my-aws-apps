@@ -345,13 +345,13 @@ export default function Tetris() {
       const currentPiece = currentTetrominoRef.current;
       
       // 左右移動後の位置から、底まで落ちる位置を計算
-      let dropY = newPosition.y;
       if (currentPiece) {
+        let dropY = newPosition.y;
         while (isValidMove(currentBoard, currentPiece, { x: newPosition.x, y: dropY + 1 }, currentRot)) {
           dropY++;
         }
+        newPosition.y = dropY;
       }
-      newPosition.y = dropY;
     }
 
     if (isValidMove(board, currentTetromino, newPosition, rotation)) {
@@ -432,6 +432,8 @@ export default function Tetris() {
     const currentRot = rotationRef.current;
     const currentBoard = boardRef.current;
     const currentPiece = currentTetrominoRef.current;
+
+    if (!currentPiece) return;
 
     // 底まで落ちる位置を計算
     let dropY = currentPos.y;
