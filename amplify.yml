@@ -4,22 +4,32 @@ frontend:
     preBuild:
       commands:
         - echo "Current directory:" && pwd
+        - echo "AMPLIFY_MONOREPO_APP_ROOT: $AMPLIFY_MONOREPO_APP_ROOT"
         - echo "Node version:" && node --version
         - echo "NPM version:" && npm --version
-        - cd apps/tetris
-        - echo "Changed to:" && pwd
+        - |
+          if [ -z "$AMPLIFY_MONOREPO_APP_ROOT" ]; then
+            echo "AMPLIFY_MONOREPO_APP_ROOT not set, changing to apps/tetris"
+            cd apps/tetris
+          else
+            echo "AMPLIFY_MONOREPO_APP_ROOT is set, already in correct directory"
+          fi
+        - echo "Working directory:" && pwd
         - echo "Installing dependencies..."
         - npm ci
     build:
       commands:
-        - cd apps/tetris
+        - |
+          if [ -z "$AMPLIFY_MONOREPO_APP_ROOT" ]; then
+            cd apps/tetris
+          fi
         - echo "Building Next.js app..."
         - npm run build
   artifacts:
-    baseDirectory: apps/tetris/.next
+    baseDirectory: .next
     files:
       - '**/*'
   cache:
     paths:
-      - apps/tetris/node_modules/**/*
-      - apps/tetris/.next/cache/**/*
+      - node_modules/**/*
+      - .next/cache/**/*
