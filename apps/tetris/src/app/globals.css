@@ -19,11 +19,19 @@
   }
 }
 
+:root {
+  --vh: 1vh;
+}
+
 html, body {
   height: 100%;
   margin: 0;
   padding: 0;
   overflow: hidden;
+  /* モバイルブラウザのアドレスバーを考慮した高さ */
+  height: calc(var(--vh, 1vh) * 100);
+  height: 100dvh;
+  height: 100vh; /* フォールバック */
 }
 
 body {
@@ -42,8 +50,12 @@ body {
 
 /* スマホ画面でスクロールを防ぐ */
 #__next {
-  height: 100vh;
+  height: calc(var(--vh, 1vh) * 100);
+  height: 100dvh;
+  height: 100vh; /* フォールバック */
   overflow: hidden;
+  /* モバイルブラウザの実際のビューポート高さを使用 */
+  min-height: -webkit-fill-available;
 }
 
 /* スマホ画面での最適化 */

@@ -216,6 +216,23 @@ export default function Tetris() {
     }
   }, []);
 
+  // モバイルブラウザのビューポート高さを動的に設定
+  useEffect(() => {
+    const setViewportHeight = () => {
+      const vh = window.innerHeight * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh}px`);
+    };
+
+    setViewportHeight();
+    window.addEventListener('resize', setViewportHeight);
+    window.addEventListener('orientationchange', setViewportHeight);
+
+    return () => {
+      window.removeEventListener('resize', setViewportHeight);
+      window.removeEventListener('orientationchange', setViewportHeight);
+    };
+  }, []);
+
   // 新しいテトリミノを開始
   const startNewTetromino = useCallback(() => {
     // ハードドロップのタイマーをクリア
@@ -507,8 +524,8 @@ export default function Tetris() {
     : board;
 
   return (
-    <div className="flex flex-col items-center justify-center h-screen bg-black text-cyan-400 p-2 overflow-hidden">
-      <div className="w-full max-w-md h-full flex flex-col justify-between">
+    <div className="flex flex-col items-center justify-center bg-black text-cyan-400 p-2 overflow-hidden" style={{ height: 'calc(var(--vh, 1vh) * 100)', minHeight: '-webkit-fill-available' }}>
+      <div className="w-full max-w-md h-full flex flex-col justify-between" style={{ maxHeight: '100%' }}>
         {/* スコア表示（コンパクト） */}
         <div className="flex justify-between items-center mb-1 text-xs sm:text-sm flex-shrink-0">
           <div className="flex flex-col">
@@ -544,7 +561,7 @@ export default function Tetris() {
         </div>
 
         {/* ゲームボードエリア（中央に配置） */}
-        <div className="flex-1 flex flex-col justify-center items-center min-h-0 mb-2">
+        <div className="flex-1 flex flex-col justify-center items-center min-h-0 mb-2 overflow-hidden" style={{ flex: '1 1 auto', minHeight: 0 }}>
           {/* ゲームオーバーメッセージ */}
           {gameOver && (
             <div className="text-center mb-2 flex-shrink-0">
@@ -563,7 +580,7 @@ export default function Tetris() {
           {/* ゲームボード（サイズ調整） */}
           <div 
             className={`bg-gray-900 p-1 rounded-lg border-2 border-cyan-500 shadow-[0_0_20px_rgba(0,255,255,0.5)] w-full tetris-board ${!gameOver ? 'cursor-pointer' : ''}`}
-            style={{ maxHeight: '100%', maxWidth: '100%', aspectRatio: '10/20' }}
+            style={{ maxHeight: '100%', maxWidth: '100%', aspectRatio: '10/20', flexShrink: 1 }}
             onClick={() => {
               if (!gameOver) {
                 togglePause();
@@ -594,7 +611,7 @@ export default function Tetris() {
         </div>
 
         {/* スマホ操作用ボタン（コンパクト） */}
-        <div className="space-y-1.5 flex-shrink-0 pb-1">
+        <div className="space-y-1.5 flex-shrink-0 pb-1" style={{ minHeight: 'fit-content' }}>
           {/* 回転ボタン */}
           <div className="flex justify-center">
             <button
