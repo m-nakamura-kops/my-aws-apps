@@ -1,136 +1,109 @@
-# AWS Amplify ビルドエラー対処ガイド
+# Amplify ビルド失敗の修正ガイド
 
-## 🔍 ビルドログの確認方法
+## 問題の確認
 
-1. **Amplifyコンソールでビルドログを確認**
-   - デプロイ履歴で「デプロイ 1」をクリック
-   - 「ビルドログ」タブを開く
-   - エラーメッセージを確認
+デプロイが失敗した場合、まずAmplifyコンソールでビルドログを確認してください。
 
-2. **よくあるエラーの原因**
+### ビルドログの確認方法
 
-### エラー1: パスの問題
+1. Amplifyコンソールで「デプロイ 2」をクリック
+2. 「ビルドログ」タブを開く
+3. エラーメッセージを確認
 
-**症状**: `amplify.yml`のパスが正しくない
+## よくある原因と対処法
 
-**解決方法**:
-ルートディレクトリが`apps/tetris`に設定されている場合、`amplify.yml`のパスは相対パスで記述する必要があります。
+### 1. ルートディレクトリの設定
 
-### エラー2: Node.jsバージョンの問題
+Amplifyコンソールで「アプリ設定」→「ビルド設定」を確認：
 
-**症状**: Node.jsのバージョンが古い、または指定されていない
+- **ルートディレクトリが `/`（リポジトリルート）の場合**
+  - ルートの `amplify.yml` が使用されます
+  - このファイルは `cd apps/tetris` を実行します
 
-**解決方法**:
-`amplify.yml`にNode.jsバージョンを明示的に指定：
+- **ルートディレクトリが `apps/tetris` の場合**
+  - `apps/tetris/amplify.yml` が使用されます
+  - このファイルは相対パスを使用します
 
-```yaml
-version: 1
-frontend:
-  phases:
-    preBuild:
-      commands:
-        - nvm use 18
-        - npm ci
-    build:
-      commands:
-        - npm run build
-  artifacts:
-    baseDirectory: .next
-    files:
-      - '**/*'
-  cache:
-    paths:
-      - node_modules/**/*
-      - .next/cache/**/*
-```
+### 2. Node.jsバージョンの問題
 
-### エラー3: 依存関係のインストールエラー
+AmplifyコンソールでNode.jsバージョンを確認：
 
-**症状**: `npm ci`が失敗する
+1. 「アプリ設定」→「ビルド設定」→「環境変数」
+2. Node.js 18.x以上を推奨
+3. 環境変数に以下を追加（必要に応じて）：
+   ```
+   NODE_VERSION=18
+   ```
 
-**解決方法**:
-`package-lock.json`が正しく存在するか確認。存在しない場合は、`npm install`を実行してからコミット。
+### 3. ビルド成果物のパス
 
-### エラー4: ビルドコマンドのエラー
+「出力ディレクトリをビルド」の設定を確認：
 
-**症状**: `npm run build`が失敗する
+- ルートディレクトリが `/` の場合：`apps/tetris/.next`
+- ルートディレクトリが `apps/tetris` の場合：`.next`
 
-**解決方法**:
-ローカルでビルドを実行してエラーを確認：
+### 4. 依存関係のインストールエラー
 
-```bash
-cd apps/tetris
-npm run build
-```
+`npm ci` が失敗する場合：
 
-## 🔧 修正手順
+- `package-lock.json` が存在することを確認
+- ルートディレクトリが正しく設定されていることを確認
 
-### ステップ1: ビルドログからエラーを特定
+## 修正内容
 
-Amplifyコンソールのビルドログで、以下のようなエラーを探してください：
+両方の `amplify.yml` ファイルに以下を追加しました：
 
-- `Error: Cannot find module`
-- `Error: Command failed`
-- `Error: ENOENT: no such file or directory`
-- `TypeError`や`ReferenceError`
+1. **デバッグ情報の追加**
+   - 現在のディレクトリを表示
+   - Node.js/NPMバージョンを表示
 
-### ステップ2: amplify.ymlを修正
+2. **エラーハンドリングの改善**
+   - 各ステップでメッセージを表示
 
-エラーに応じて`amplify.yml`を修正します。
+## 次のステップ
 
-### ステップ3: 修正をコミット・プッシュ
+1. **Amplifyコンソールで設定を確認**
+   - 「アプリ設定」→「ビルド設定」→「ルートディレクトリ」を確認
+   - ルートディレクトリが `/` または `apps/tetris` のどちらかに設定されているか確認
 
-```bash
-git add apps/tetris/amplify.yml
-git commit -m "fix: Amplifyビルド設定を修正"
-git push origin main
-```
+2. **ビルドログを確認**
+   - エラーメッセージを特定
+   - 上記の対処法を試す
 
-### ステップ4: 再デプロイ
+3. **再デプロイ**
+   - 「このバージョンを再デプロイ」ボタンをクリック
 
-Amplifyコンソールで「このバージョンを再デプロイ」をクリック、または新しいコミットで自動デプロイを待つ。
+## トラブルシューティング
 
-## 📝 推奨されるamplify.yml設定
+### エラー: "npm ci failed"
 
-monorepo構造で、ルートディレクトリが`apps/tetris`の場合：
+**原因**: `package-lock.json` が見つからない、またはルートディレクトリが間違っている
 
-```yaml
-version: 1
-frontend:
-  phases:
-    preBuild:
-      commands:
-        - nvm use 18 || nvm use 20
-        - npm ci
-    build:
-      commands:
-        - npm run build
-  artifacts:
-    baseDirectory: .next
-    files:
-      - '**/*'
-  cache:
-    paths:
-      - node_modules/**/*
-      - .next/cache/**/*
-```
+**対処法**:
+- ルートディレクトリが `apps/tetris` に設定されていることを確認
+- または、ルートディレクトリが `/` の場合、ルートの `amplify.yml` が使用されることを確認
 
-## 🆘 よくある問題と解決策
+### エラー: "Build failed"
 
-### 問題1: ビルド成果物が見つからない
+**原因**: Next.jsのビルドが失敗している
 
-**原因**: `baseDirectory`のパスが間違っている
+**対処法**:
+- ビルドログで具体的なエラーメッセージを確認
+- ローカルで `npm run build` を実行してエラーを再現
 
-**解決**: ルートディレクトリが`apps/tetris`の場合、`.next`が正しいパスです。
+### エラー: "Artifacts not found"
 
-### 問題2: 環境変数が必要
+**原因**: `baseDirectory` のパスが間違っている
 
-**原因**: ビルド時に環境変数が必要な場合
+**対処法**:
+- ルートディレクトリに応じて `baseDirectory` を確認
+- ルートディレクトリが `/` の場合：`apps/tetris/.next`
+- ルートディレクトリが `apps/tetris` の場合：`.next`
 
-**解決**: Amplifyコンソールの「環境変数」セクションで設定。
+## 確認事項チェックリスト
 
-### 問題3: タイムアウト
-
-**原因**: ビルド時間が長すぎる
-
-**解決**: ビルド時間を短縮するか、Amplifyのビルドタイムアウト設定を確認。
+- [ ] Amplifyコンソールでルートディレクトリを確認
+- [ ] ビルドログでエラーメッセージを確認
+- [ ] Node.jsバージョンが18.x以上であることを確認
+- [ ] `package-lock.json` が存在することを確認
+- [ ] ローカルで `npm run build` が成功することを確認
