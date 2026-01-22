@@ -322,6 +322,63 @@ export default function Tetris() {
     }
   };
 
+  // ハードドロップ（一気に底まで落とす）
+  const hardDrop = () => {
+    if (!currentTetromino || gameOver || isPaused) return;
+
+    const currentPos = positionRef.current;
+    const currentRot = rotationRef.current;
+    const currentBoard = boardRef.current;
+    const currentPiece = currentTetrominoRef.current;
+
+    // 底まで落ちる位置を計算
+    let dropY = currentPos.y;
+    while (isValidMove(currentBoard, currentPiece, { x: currentPos.x, y: dropY + 1 }, currentRot)) {
+      dropY++;
+    }
+
+    // スコアを追加（落とした距離 × 2）
+    const dropDistance = dropY - currentPos.y;
+    if (dropDistance > 0) {
+      setScore((prev) => prev + dropDistance * 2);
+      
+      // 位置を設定して即座に固定
+      const finalPosition = { x: currentPos.x, y: dropY };
+      const newBoard = placeTetromino(currentBoard, currentPiece, finalPosition, currentRot);
+      const { newBoard: clearedBoard, linesCleared } = clearLines(newBoard);
+      setBoard(clearedBoard);
+      setPosition(finalPosition);
+
+      if (linesCleared > 0) {
+        setLines((prevLines) => {
+          const newLines = prevLines + linesCleared;
+          const newLevel = Math.floor(newLines / 10) + 1;
+          setLevel(newLevel);
+          // スコアも同時に更新（レベル計算に基づく）
+          setScore((prevScore) => {
+            const currentLevel = Math.floor(prevLines / 10) + 1;
+            const newScore = prevScore + linesCleared * 100 * currentLevel;
+            // ハイスコアを更新
+            setHighScore((prevHighScore) => {
+              if (newScore > prevHighScore) {
+                localStorage.setItem('tetris-high-score', newScore.toString());
+                return newScore;
+              }
+              return prevHighScore;
+            });
+            return newScore;
+          });
+          return newLines;
+        });
+      }
+
+      startNewTetromino();
+    } else {
+      // 既に底にいる場合は通常のdrop処理
+      drop();
+    }
+  };
+
   // 回転処理
   const rotateTetromino = () => {
     if (!currentTetromino || gameOver || isPaused) return;
@@ -479,14 +536,14 @@ export default function Tetris() {
             </button>
           </div>
 
-          {/* 下ボタン */}
+          {/* 下ボタン（ハードドロップ） */}
           <div className="flex justify-center">
             <button
-              onClick={() => moveTetromino('down')}
+              onClick={hardDrop}
               disabled={gameOver || isPaused}
               className="w-full h-12 sm:h-14 bg-green-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-green-400 active:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,255,0,0.8)] touch-manipulation"
             >
-              ⬇ 下
+              ⬇ 一気に下
             </button>
           </div>
         </div>
