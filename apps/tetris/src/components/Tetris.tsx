@@ -190,6 +190,9 @@ export default function Tetris() {
   const hardDropPositionRef = useRef<{ x: number; y: number } | null>(null);
   const hardDropLockedRef = useRef(false);
   const lockHardDroppedPieceRef = useRef<(() => void) | null>(null);
+  const downButtonPressStartRef = useRef<number | null>(null);
+  const downButtonIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isHardDroppingRef = useRef(false);
 
   // refを最新の値に同期
   useEffect(() => {
@@ -327,6 +330,9 @@ export default function Tetris() {
     return () => {
       if (hardDropTimeoutRef.current) {
         clearTimeout(hardDropTimeoutRef.current);
+      }
+      if (downButtonIntervalRef.current) {
+        clearInterval(downButtonIntervalRef.current);
       }
     };
   }, []);
@@ -468,6 +474,7 @@ export default function Tetris() {
       setPosition(finalPosition);
       hardDropPositionRef.current = finalPosition;
       setHardDropLocked(true);
+      isHardDroppingRef.current = false;
 
       // 1秒後に固定
       if (hardDropTimeoutRef.current) {
@@ -483,6 +490,89 @@ export default function Tetris() {
       drop();
     }
   };
+
+  // 連続落下を停止
+  const stopContinuousDrop = useCallback(() => {
+    if (downButtonIntervalRef.current) {
+      clearInterval(downButtonIntervalRef.current);
+      downButtonIntervalRef.current = null;
+    }
+    isHardDroppingRef.current = false;
+  }, []);
+
+  // 連続落下を開始（通常の倍の速度）
+  const startContinuousDrop = useCallback(() => {
+    if (!currentTetromino || gameOver || isPaused || hardDropLocked) return;
+    
+    // 既に連続落下中なら何もしない
+    if (downButtonIntervalRef.current) return;
+
+    // 通常の落下速度の倍の速度で落下（通常の落下間隔の半分）
+    const dropInterval = Math.max(50, (1000 - (level - 1) * 50) / 2);
+    
+    downButtonIntervalRef.current = setInterval(() => {
+      const currentPos = positionRef.current;
+      const currentRot = rotationRef.current;
+      const currentBoard = boardRef.current;
+      const currentPiece = currentTetrominoRef.current;
+
+      if (!currentPiece) {
+        stopContinuousDrop();
+        return;
+      }
+
+      const newPosition = { ...currentPos, y: currentPos.y + 1 };
+      if (isValidMove(currentBoard, currentPiece, newPosition, currentRot)) {
+        setPosition(newPosition);
+        setScore((prev) => prev + 1);
+      } else {
+        // 底に着いたら固定
+        stopContinuousDrop();
+        drop();
+      }
+    }, dropInterval);
+  }, [currentTetromino, gameOver, isPaused, hardDropLocked, level, drop, stopContinuousDrop]);
+
+  // 下ボタンを押し始めた時の処理
+  const handleDownButtonPress = useCallback(() => {
+    if (!currentTetromino || gameOver || isPaused || hardDropLocked) return;
+
+    // 押し始めた時刻を記録
+    downButtonPressStartRef.current = Date.now();
+    
+    // 連続落下を開始
+    startContinuousDrop();
+
+    // 1秒後にハードドロップを実行
+    setTimeout(() => {
+      // まだ押し続けているか確認
+      if (downButtonPressStartRef.current !== null && downButtonIntervalRef.current) {
+        stopContinuousDrop();
+        isHardDroppingRef.current = true;
+        hardDrop();
+      }
+    }, 1000);
+  }, [currentTetromino, gameOver, isPaused, hardDropLocked, startContinuousDrop, stopContinuousDrop, hardDrop]);
+
+  // 下ボタンを離した時の処理
+  const handleDownButtonRelease = useCallback(() => {
+    const pressStart = downButtonPressStartRef.current;
+    
+    if (pressStart === null) return;
+
+    const pressDuration = Date.now() - pressStart;
+    downButtonPressStartRef.current = null;
+
+    // 連続落下を停止
+    stopContinuousDrop();
+
+    // 1秒未満の場合は1セル下に移動
+    if (pressDuration < 1000 && !isHardDroppingRef.current) {
+      moveTetromino('down');
+    }
+
+    isHardDroppingRef.current = false;
+  }, [stopContinuousDrop, moveTetromino]);
 
   // 回転処理
   const rotateTetromino = () => {
@@ -638,9 +728,23 @@ export default function Tetris() {
             ⬅️
           </button>
           
-          {/* 下ボタン（ハードドロップ） */}
+          {/* 下ボタン */}
           <button
-            onClick={hardDrop}
+            onMouseDown={handleDownButtonPress}
+            onMouseUp={handleDownButtonRelease}
+            onMouseLeave={handleDownButtonRelease}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              handleDownButtonPress();
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              handleDownButtonRelease();
+            }}
+            onTouchCancel={(e) => {
+              e.preventDefault();
+              handleDownButtonRelease();
+            }}
             disabled={gameOver || isPaused}
             className="flex-1 h-12 sm:h-14 bg-gray-700 text-white font-bold text-2xl rounded-lg hover:bg-gray-600 active:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all touch-manipulation"
           >
