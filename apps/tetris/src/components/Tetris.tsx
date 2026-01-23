@@ -627,47 +627,43 @@ export default function Tetris() {
           </div>
         </div>
 
-        {/* スマホ操作用ボタン（コンパクト） */}
-        <div className="space-y-1.5 flex-shrink-0 pb-1" style={{ minHeight: 'fit-content' }}>
-          {/* 回転ボタン */}
-          <div className="flex justify-center">
-            <button
-              onClick={rotateTetromino}
-              disabled={gameOver || isPaused}
-              className="w-full h-11 sm:h-12 bg-purple-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-purple-400 active:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(160,0,240,0.8)] touch-manipulation"
-            >
-              🔄 回転
-            </button>
-          </div>
-
-          {/* 左右ボタン */}
-          <div className="flex justify-between gap-2">
-            <button
-              onClick={() => moveTetromino('left')}
-              disabled={gameOver || isPaused}
-              className="flex-1 h-12 sm:h-14 bg-blue-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
-            >
-              ← 左
-            </button>
-            <button
-              onClick={() => moveTetromino('right')}
-              disabled={gameOver || isPaused}
-              className="flex-1 h-12 sm:h-14 bg-blue-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-blue-400 active:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,0,255,0.8)] touch-manipulation"
-            >
-              右 →
-            </button>
-          </div>
-
+        {/* スマホ操作用ボタン（一列に並べる） */}
+        <div className="flex gap-2 flex-shrink-0 pb-1" style={{ minHeight: 'fit-content' }}>
+          {/* 左ボタン */}
+          <button
+            onClick={() => moveTetromino('left')}
+            disabled={gameOver || isPaused}
+            className="flex-1 h-12 sm:h-14 bg-gray-700 text-white font-bold text-2xl rounded-lg hover:bg-gray-600 active:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all touch-manipulation"
+          >
+            ⬅️
+          </button>
+          
           {/* 下ボタン（ハードドロップ） */}
-          <div className="flex justify-center">
-            <button
-              onClick={hardDrop}
-              disabled={gameOver || isPaused}
-              className="w-full h-12 sm:h-14 bg-green-500 text-white font-bold text-sm sm:text-base rounded-lg hover:bg-green-400 active:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_20px_rgba(0,255,0,0.8)] touch-manipulation"
-            >
-              ⬇ 一気に下
-            </button>
-          </div>
+          <button
+            onClick={hardDrop}
+            disabled={gameOver || isPaused}
+            className="flex-1 h-12 sm:h-14 bg-gray-700 text-white font-bold text-2xl rounded-lg hover:bg-gray-600 active:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all touch-manipulation"
+          >
+            ⬇️
+          </button>
+          
+          {/* 右ボタン */}
+          <button
+            onClick={() => moveTetromino('right')}
+            disabled={gameOver || isPaused}
+            className="flex-1 h-12 sm:h-14 bg-gray-700 text-white font-bold text-2xl rounded-lg hover:bg-gray-600 active:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all touch-manipulation"
+          >
+            ➡️
+          </button>
+          
+          {/* 回転ボタン */}
+          <button
+            onClick={rotateTetromino}
+            disabled={gameOver || isPaused}
+            className="flex-1 h-12 sm:h-14 bg-gray-700 text-white font-bold text-2xl rounded-lg hover:bg-gray-600 active:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all touch-manipulation"
+          >
+            🌀
+          </button>
         </div>
       </div>
     </div>
