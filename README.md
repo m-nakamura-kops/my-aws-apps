@@ -1,4 +1,4 @@
-# My AWS Apps
+        　ｂｆ１  1 1q21# My AWS Apps
 
 AWS環境で開発する各種アプリケーションを管理するリポジトリです。
 
@@ -8,8 +8,9 @@ AWS環境で開発する各種アプリケーションを管理するリポジ�
 my-aws-apps/
 ├── apps/
 │   ├── notion-integration/     # Notion連携アプリ
-│   ├── task-management/        # タスク管理アプリ（開発予定）
-│   └── [今後追加するアプリ]/
+│   ├── task-management/        # タスク管理アプリ
+│   ├── tetris/                 # テトリスアプリ
+│   └── qr-attendance/          # QRコード打刻システム
 ├── infrastructure/              # 共通のAWS設定（必要に応じて）
 └── README.md
 ```
@@ -22,7 +23,17 @@ Notion APIを使用してNotionデータベースに接続し、データを取�
 詳細は [apps/notion-integration/README.md](./apps/notion-integration/README.md) を参照してください。
 
 ### タスク管理アプリ
-AWS環境で開発するタスク管理アプリケーション（開発予定）
+AWS環境で開発するタスク管理アプリケーション
+
+### テトリスアプリ
+Next.jsとAWS Amplifyを使用したテトリスゲームアプリケーション
+
+詳細は [apps/tetris/README.md](./apps/tetris/README.md) を参照してください。
+
+### QRコード打刻システム
+QRコードを用いたイベント参加者の打刻管理システム。AWS Amplify、Cognito、API Gateway、Lambda、RDSを使用したフルスタックアプリケーション。
+
+詳細は [apps/qr-attendance/README.md](./apps/qr-attendance/README.md) を参照してください。
 
 ## 開発ガイドライン
 
