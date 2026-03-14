@@ -1,0 +1,7 @@
+{
+  "name": "events-list",
+  "private": true,
+  "dependencies": {
+    "mysql2": "^3.9.0"
+  }
+}
