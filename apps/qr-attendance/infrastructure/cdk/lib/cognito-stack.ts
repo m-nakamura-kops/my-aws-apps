@@ -31,6 +31,12 @@ export class QrAttendanceCognitoStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY, // 開発環境用、本番ではRETAIN推奨
     });
 
+    // サインアップを許可（AllowAdminCreateUserOnlyをfalseに設定）
+    const cfnUserPool = this.userPool.node.defaultChild as cognito.CfnUserPool;
+    cfnUserPool.adminCreateUserConfig = {
+      allowAdminCreateUserOnly: false,
+    };
+
     // User Pool Client作成
     this.userPoolClient = new cognito.UserPoolClient(this, 'UserPoolClient', {
       userPool: this.userPool,
@@ -40,6 +46,7 @@ export class QrAttendanceCognitoStack extends cdk.Stack {
         userPassword: true,
         userSrp: true,
       },
+      preventUserExistenceErrors: false, // サインアップを許可
       refreshTokenValidity: cdk.Duration.days(30),
       accessTokenValidity: cdk.Duration.hours(24),
       idTokenValidity: cdk.Duration.hours(24),

@@ -34,8 +34,10 @@ QRコード打刻システムのデータベーススキーマ定義です。
   - `email` → `users.email`
   - `event_id` → `events.event_id`
   - `staff_email` → `users.email` (**必須: NOT NULL**)
-- **説明**: QRコードによる打刻履歴を管理
-- **重要な制約**: `staff_email`は必須（NOT NULL）で、`users.email`を参照
+- **説明**: QRコード・手動打刻の履歴を管理。`notes` に手動打刻時は「手動打刻」を記録
+- **重要な制約**: 
+  - `staff_email`は必須（NOT NULL）で、`users.email`を参照
+  - **UNIQUE( event_id, email )**: 同一イベント・同一利用者の二重打刻をDB層で防止（マイグレーション 003 で追加）
 
 ## 使用方法
 
@@ -47,11 +49,24 @@ mysql -u root -p < schema.sql
 
 # または、データベース名を指定
 mysql -u root -p qr_attendance < schema.sql
+
+# マイグレーション（schema 適用後に実行。database/ がカレントのとき）
+mysql -u root -p qr_attendance < migrations/002_add_attendance_logs_notes.sql   # notes カラム追加
+mysql -u root -p qr_attendance < migrations/003_add_unique_event_email_attendance_logs.sql   # 二重打刻防止 UNIQUE
 ```
 
 ### 接続情報
 
 本番環境ではAmazon RDSを使用します。接続情報は環境変数で管理してください。
+
+### 結合テスト用テストデータの投入
+
+管理者・スタッフ・利用者の3種のテストユーザーを作成する場合:
+
+- **SQLで投入**: `mysql -u root -p qr_attendance < database/seed-test-users.sql`
+- **Node.jsで投入**: `cd apps/qr-attendance/backend && npm run seed-test-users`（backend/.env に DB 設定が必要）
+
+作成されるユーザー: `it-admin@example.com`（管理者）, `it-staff@example.com`（スタッフ）, `it-user@example.com`（利用者）。共通パスワード: `TestPass12`。
 
 ## ビュー
 

@@ -1,0 +1,43 @@
+# Polaris環境構築用 Docker Compose設定ファイル
+# 使用方法: リポジトリをクローン後、このファイルを docker-compose.yml として使用
+# または、リポジトリ内の docker-compose.yml と内容を比較して確認
+
+services:
+    db:
+        image: mysql:8.0
+        environment:
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_ROOT_PASSWORD: 'root'
+            MYSQL_DATABASE: 'polaris'
+            TZ: 'UTC'
+        ports:
+            - '3310:3306'
+        volumes:
+            - data-volume:/var/lib/mysql
+        command: '--general_log=0 --slow_query_log=0 --max_connections=500 --default-authentication-plugin=mysql_native_password'
+        cap_add:
+            - SYS_NICE
+        healthcheck:
+            test: ['CMD-SHELL', "mysql -h 127.0.0.1 -u root -p'root' -P 3306 || exit 1"]
+            interval: 3s
+            timeout: 30s
+            retries: 10
+    mongodb:
+        image: mongo
+        environment:
+            MONGO_INITDB_DATABASE: polaris
+        volumes:
+            - mongodb-volume:/data/db
+        ports:
+            - '27018:27017'
+    mailhog:
+        image: mailhog/mailhog
+        platform: linux/amd64
+        ports:
+            - '8026:8025'
+            - '1026:1025'
+
+volumes:
+    data-volume:
+    mongodb-volume:
+

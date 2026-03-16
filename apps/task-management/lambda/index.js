@@ -32,22 +32,28 @@ const TABLE_NAME = process.env.TASKS_TABLE_NAME || 'Tasks';
 export const handler = async (event) => {
   console.log('Received event:', JSON.stringify(event, null, 2));
 
-  // CORSヘッダー（開発用、本番ではCloudFrontドメインのみ許可）
+  // リクエストのOriginを取得
+  const origin = event.headers?.origin || event.headers?.Origin || '';
+  
+  // 許可するOriginのリスト
+  const allowedOrigins = [
+    'https://d37xuhikacb4ca.cloudfront.net',
+    'http://localhost:8000'
+  ];
+  
+  // Originが許可リストに含まれているか確認
+  const allowedOrigin = allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+
+  // CORSヘッダー（プロキシ統合の場合、Lambda関数でCORSヘッダーを返す必要がある）
   const headers = {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*', // 本番では特定ドメインに変更
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'
   };
 
-  // OPTIONSリクエスト（CORSプリフライト）の処理
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers,
-      body: ''
-    };
-  }
+  // OPTIONSリクエスト（CORSプリフライト）はAPI GatewayのMock統合で処理されるため、
+  // Lambda関数では処理しない（プロキシ統合の場合、OPTIONSリクエストはLambdaに到達しない）
 
   try {
     // ルーティング処理

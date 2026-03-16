@@ -47,16 +47,16 @@
                     </div>
 
                     <div class="mb-3">
-                        <label for="description" class="form-label">説明</label>
-                        <textarea 
-                            class="form-control" 
-                            id="description" 
-                            name="description" 
-                            rows="3"
-                            maxlength="2000"
-                            placeholder="タスクの詳細説明（任意）"
-                        ></textarea>
-                        <div class="form-text">最大2000文字</div>
+                        <label for="description" class="form-label">
+                            説明 <span id="description-count" class="text-muted" style="display: none;"></span>
+                        </label>
+                        <div id="description-checklist" class="description-checklist">
+                            <!-- チェックボックス付きリストがここに動的に追加されます -->
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="add-description-item-btn">
+                            + 行を追加
+                        </button>
+                        <div class="form-text">最大2000文字（各行の合計）</div>
                     </div>
 
                     <div class="row">
@@ -94,9 +94,25 @@
         <section class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h2 class="h5 mb-0">タスク一覧</h2>
-                <button class="btn btn-sm btn-outline-secondary" id="refresh-btn">
-                    🔄 更新
-                </button>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-info" id="bulk-operation-btn">
+                        一括操作
+                    </button>
+                    <div id="bulk-actions" class="d-none">
+                        <button class="btn btn-sm btn-outline-primary" id="bulk-edit-btn">
+                            編集
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" id="bulk-delete-btn">
+                            削除
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" id="cancel-bulk-operation-btn">
+                            キャンセル
+                        </button>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary" id="refresh-btn">
+                        🔄 更新
+                    </button>
+                </div>
             </div>
             <div class="card-body">
                 <div id="loading" class="text-center py-4">
@@ -141,16 +157,16 @@
                         </div>
 
                         <div class="mb-3">
-                            <label for="edit-description" class="form-label">説明</label>
-                            <textarea 
-                                class="form-control" 
-                                id="edit-description" 
-                                name="description" 
-                                rows="3"
-                                maxlength="2000"
-                                placeholder="タスクの詳細説明（任意）"
-                            ></textarea>
-                            <div class="form-text">最大2000文字</div>
+                            <label for="edit-description" class="form-label">
+                                説明 <span id="edit-description-count" class="text-muted" style="display: none;"></span>
+                            </label>
+                            <div id="edit-description-checklist" class="description-checklist">
+                                <!-- チェックボックス付きリストがここに動的に追加されます -->
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="add-edit-description-item-btn">
+                                + 行を追加
+                            </button>
+                            <div class="form-text">最大2000文字（各行の合計）</div>
                         </div>
 
                         <div class="row">
@@ -180,6 +196,45 @@
                         <span class="spinner-border spinner-border-sm d-none" id="edit-spinner" role="status"></span>
                         保存
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 完了確認モーダル -->
+    <div class="modal fade" id="completeTaskModal" tabindex="-1" aria-labelledby="completeTaskModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="completeTaskModalLabel">タスク完了確認</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="complete-task-message"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="cancel-complete-btn" data-bs-dismiss="modal">いいえ</button>
+                    <button type="button" class="btn btn-primary" id="confirm-complete-btn">はい</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 一括削除確認モーダル -->
+    <div class="modal fade" id="bulkDeleteModal" tabindex="-1" aria-labelledby="bulkDeleteModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="bulkDeleteModalLabel">一括削除確認</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>一括で削除しますか？</p>
+                    <p class="text-muted small" id="bulk-delete-count"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="cancel-bulk-delete-btn" data-bs-dismiss="modal">いいえ</button>
+                    <button type="button" class="btn btn-danger" id="confirm-bulk-delete-btn">はい</button>
                 </div>
             </div>
         </div>

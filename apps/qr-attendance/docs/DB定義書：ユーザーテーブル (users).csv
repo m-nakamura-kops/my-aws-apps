@@ -1,0 +1,14 @@
+テーブル名,users,ユーザーテーブル
+説明,,メールアドレスを主キーとする利用者・スタッフ・管理者のアカウント情報
+,,,,,
+No,論理名,物理名,データ型,NULL,キー/制約,デフォルト,説明
+1,メールアドレス,email,VARCHAR(255),NOT NULL,PRIMARY KEY,,メールアドレス
+2,パスワード,password,VARCHAR(100),NOT NULL,,,パスワード（ハッシュ等）
+3,氏名（漢字）,name_kanji,VARCHAR(50),NOT NULL,,,氏名（漢字）
+4,カナ（フリガナ）,name_kana,VARCHAR(100),NOT NULL,,,カナ（フリガナ）
+5,電話番号,tel,VARCHAR(15),NOT NULL,,,電話番号
+6,組織ID,org_id,VARCHAR(20),NULL,INDEX,,組織ID
+7,役割フラグ,role_flag,INT,NOT NULL,INDEX,,1=利用者 2=スタッフ等 3=管理者
+8,備考,remarks,TEXT,NULL,,,備考
+9,作成日時,created_at,DATETIME,NULL,,CURRENT_TIMESTAMP,作成日時
+10,更新日時,updated_at,DATETIME,NULL,,CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,更新日時

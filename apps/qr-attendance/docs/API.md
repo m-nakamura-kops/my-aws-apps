@@ -182,7 +182,35 @@ Authorization: Bearer <token>
 
 ---
 
-### 2. 利用者新規登録（管理者用）
+### 2. 生徒一括登録（CSVインポート）
+
+**エンドポイント**: `POST /v1/admin/students/import`
+
+**認証**: 管理者権限必須（クエリ `email` または Authorization ヘッダー）
+
+**リクエストボディ**:
+```json
+{
+  "csv": "email,password,name_kanji,name_kana,tel,org_id,remarks\nuser1@example.com,pass1234,山田 太郎,ヤマダ タロウ,090-1234-5678,ORG01,備考"
+}
+```
+
+**CSV形式**: 1行目はヘッダー（`email` または「メール」）可。列順: `email`, `password`, `name_kanji`, `name_kana`, `tel`, `org_id`（任意）, `remarks`（任意）。パスワードは8文字以上。ダブルクォートで囲んだ項目内にカンマを含め可能。
+
+**レスポンス** (200 OK):
+```json
+{
+  "imported": 1,
+  "totalRows": 2,
+  "errors": []
+}
+```
+
+エラーがある行は `errors` に `{ "row": 行番号, "email": "メール", "message": "エラー内容" }` で返る。
+
+---
+
+### 3. 利用者新規登録（管理者用）
 
 **エンドポイント**: `POST /v1/users/register`
 
@@ -210,7 +238,7 @@ Authorization: Bearer <token>
 
 ---
 
-### 3. スタッフ招待
+### 4. スタッフ招待
 
 **エンドポイント**: `POST /v1/admin/invite`
 
@@ -232,7 +260,7 @@ Authorization: Bearer <token>
 
 ---
 
-### 4. イベント作成
+### 5. イベント作成
 
 **エンドポイント**: `POST /v1/admin/events`
 
@@ -257,7 +285,7 @@ Authorization: Bearer <token>
 
 ---
 
-### 5. レポート出力
+### 6. レポート出力
 
 **エンドポイント**: `GET /v1/admin/reports`
 
@@ -289,7 +317,7 @@ Authorization: Bearer <token>
 
 ---
 
-### 6. お知らせ投稿
+### 7. お知らせ投稿
 
 **エンドポイント**: `POST /v1/admin/news`
 
@@ -311,7 +339,7 @@ Authorization: Bearer <token>
 
 ---
 
-### 7. スタッフ一覧取得
+### 8. スタッフ一覧取得
 
 **エンドポイント**: `GET /v1/admin/staffs`
 
