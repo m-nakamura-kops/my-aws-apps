@@ -31,13 +31,6 @@ const handler = async (event) => {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Request body is required', 400);
         }
         const { event_name, event_date, location, capacity, summary } = JSON.parse(event.body);
-        // データベース接続を取得（既に初期化済み）
-        const db = (0, connection_1.getDB)();
-        // イベントの存在確認
-        const [existingEvents] = await db.execute('SELECT * FROM events WHERE event_id = ?', [eventId]);
-        if (existingEvents.length === 0) {
-            return (0, response_1.errorResponse)('NOT_FOUND', 'Event not found', 404);
-        }
         // 更新フィールドの構築
         const updateFields = [];
         const updateValues = [];
@@ -70,12 +63,21 @@ const handler = async (event) => {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'No fields to update', 400);
         }
         updateValues.push(eventId);
-        // イベント更新
-        await db.execute(`UPDATE events SET ${updateFields.join(', ')} WHERE event_id = ?`, updateValues);
-        // 更新されたイベントを取得
-        const [updatedEvents] = await db.execute('SELECT * FROM events WHERE event_id = ?', [eventId]);
+        const pool = (0, connection_1.getDB)();
+        const updated = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [existingEvents] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId]));
+            if (existingEvents.length === 0) {
+                return { err: 'not_found' };
+            }
+            await conn.execute(`UPDATE events SET ${updateFields.join(', ')} WHERE event_id = ?`, updateValues);
+            const [updatedEvents] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId]));
+            return { err: null, event: updatedEvents[0] };
+        });
+        if (updated.err === 'not_found') {
+            return (0, response_1.errorResponse)('NOT_FOUND', 'Event not found', 404);
+        }
         return (0, response_1.successResponse)({
-            event: updatedEvents[0],
+            event: updated.event,
         });
     }
     catch (error) {

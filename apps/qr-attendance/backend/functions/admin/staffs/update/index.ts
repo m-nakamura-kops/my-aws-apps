@@ -4,7 +4,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
@@ -32,6 +32,10 @@ export const handler = async (
     if (!email) {
       return errorResponse('BAD_REQUEST', 'email is required', 400);
     }
+    // 自爆防止: 自分自身の権限は変更できない
+    if (permissionCheck.email && permissionCheck.email.toLowerCase() === email.toLowerCase()) {
+      return errorResponse('FORBIDDEN', '自分自身の権限は変更できません', 403);
+    }
 
     // リクエストボディの解析
     if (!event.body) {
@@ -40,28 +44,14 @@ export const handler = async (
 
     const { name_kanji, name_kana, tel, org_id, remarks, password, role_flag } = JSON.parse(event.body);
 
-    // データベース接続を取得
-    const db = getDB();
-
-    // ユーザーの存在確認（role_flag = 2 スタッフ または 3 管理者 のみ編集可能）
-    const [existingUsers] = await db.execute(
-      'SELECT email, role_flag FROM users WHERE email = ?',
-      [email]
-    ) as any[];
-
-    if (existingUsers.length === 0) {
-      return errorResponse('NOT_FOUND', 'Staff not found', 404);
-    }
-
-    const currentRole = existingUsers[0].role_flag;
-    if (currentRole !== 2 && currentRole !== 3) {
-      return errorResponse('BAD_REQUEST', 'User is not a staff or admin', 400);
-    }
-
-    // role_flag の変更は 2 または 3 のみ許可（管理者がスタッフ⇔管理者を切り替え）
+    // role_flag: 1=利用者へ戻す（スタッフ権限解除）, 2=スタッフ, 3=管理者
     if (role_flag !== undefined) {
-      if (role_flag !== 2 && role_flag !== 3) {
-        return errorResponse('BAD_REQUEST', 'role_flag must be 2 (staff) or 3 (admin)', 400);
+      if (role_flag !== 1 && role_flag !== 2 && role_flag !== 3) {
+        return errorResponse(
+          'BAD_REQUEST',
+          'role_flag must be 1 (user), 2 (staff), or 3 (admin)',
+          400
+        );
       }
     }
 
@@ -106,20 +96,39 @@ export const handler = async (
 
     updateValues.push(email);
 
-    // 更新実行
-    await db.execute(
-      `UPDATE users SET ${updateFields.join(', ')} WHERE email = ?`,
-      updateValues
-    );
+    const pool = getDB();
+    const result = await withConnection(pool, async (conn) => {
+      const [existingUsers] = (await conn.execute(
+        'SELECT email, role_flag FROM users WHERE email = ?',
+        [email]
+      )) as any[];
 
-    // 更新後のユーザー情報を取得
-    const [updatedUsers] = await db.execute(
-      'SELECT email, name_kanji, name_kana, tel, org_id, remarks, role_flag, created_at, updated_at FROM users WHERE email = ?',
-      [email]
-    ) as any[];
+      if (existingUsers.length === 0) {
+        return { err: 'not_found' as const };
+      }
+
+      const currentRole = existingUsers[0].role_flag;
+      if (currentRole !== 2 && currentRole !== 3) {
+        return { err: 'not_staff' as const };
+      }
+
+      await conn.execute(`UPDATE users SET ${updateFields.join(', ')} WHERE email = ?`, updateValues);
+      const [updatedUsers] = (await conn.execute(
+        'SELECT email, name_kanji, name_kana, tel, org_id, remarks, role_flag, created_at, updated_at FROM users WHERE email = ?',
+        [email]
+      )) as any[];
+      return { err: null, staff: updatedUsers[0] };
+    });
+
+    if (result.err === 'not_found') {
+      return errorResponse('NOT_FOUND', 'Staff not found', 404);
+    }
+    if (result.err === 'not_staff') {
+      return errorResponse('BAD_REQUEST', 'User is not a staff or admin', 400);
+    }
 
     return successResponse({
-      staff: updatedUsers[0],
+      staff: result.staff,
       message: 'Staff updated successfully',
     });
   } catch (error: any) {

@@ -55,32 +55,25 @@ const handler = async (event) => {
         if (!permissionCheck.authorized) {
             return (0, response_1.errorResponse)('FORBIDDEN', permissionCheck.error || 'Admin access required', 403);
         }
-        // パスパラメータからemailを取得
+        // パスパラメータからemailを取得（URLデコード）
         const rawEmail = event.pathParameters?.email;
         const email = rawEmail ? decodeURIComponent(rawEmail) : null;
         if (!email) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'email is required', 400);
+        }
+        // 自爆防止: 自分自身の権限は変更できない
+        if (permissionCheck.email && permissionCheck.email.toLowerCase() === email.toLowerCase()) {
+            return (0, response_1.errorResponse)('FORBIDDEN', '自分自身の権限は変更できません', 403);
         }
         // リクエストボディの解析
         if (!event.body) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Request body is required', 400);
         }
         const { name_kanji, name_kana, tel, org_id, remarks, password, role_flag } = JSON.parse(event.body);
-        // データベース接続を取得
-        const db = (0, connection_1.getDB)();
-        // ユーザーの存在確認（role_flag = 2 スタッフ または 3 管理者 のみ編集可能）
-        const [existingUsers] = await db.execute('SELECT email, role_flag FROM users WHERE email = ?', [email]);
-        if (existingUsers.length === 0) {
-            return (0, response_1.errorResponse)('NOT_FOUND', 'Staff not found', 404);
-        }
-        const currentRole = existingUsers[0].role_flag;
-        if (currentRole !== 2 && currentRole !== 3) {
-            return (0, response_1.errorResponse)('BAD_REQUEST', 'User is not a staff or admin', 400);
-        }
-        // role_flag の変更は 2 または 3 のみ許可
+        // role_flag: 1=利用者へ戻す（スタッフ権限解除）, 2=スタッフ, 3=管理者
         if (role_flag !== undefined) {
-            if (role_flag !== 2 && role_flag !== 3) {
-                return (0, response_1.errorResponse)('BAD_REQUEST', 'role_flag must be 2 (staff) or 3 (admin)', 400);
+            if (role_flag !== 1 && role_flag !== 2 && role_flag !== 3) {
+                return (0, response_1.errorResponse)('BAD_REQUEST', 'role_flag must be 1 (user), 2 (staff), or 3 (admin)', 400);
             }
         }
         // 更新フィールドの構築
@@ -120,12 +113,28 @@ const handler = async (event) => {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'No fields to update', 400);
         }
         updateValues.push(email);
-        // 更新実行
-        await db.execute(`UPDATE users SET ${updateFields.join(', ')} WHERE email = ?`, updateValues);
-        // 更新後のユーザー情報を取得
-        const [updatedUsers] = await db.execute('SELECT email, name_kanji, name_kana, tel, org_id, remarks, role_flag, created_at, updated_at FROM users WHERE email = ?', [email]);
+        const pool = (0, connection_1.getDB)();
+        const result = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [existingUsers] = (await conn.execute('SELECT email, role_flag FROM users WHERE email = ?', [email]));
+            if (existingUsers.length === 0) {
+                return { err: 'not_found' };
+            }
+            const currentRole = existingUsers[0].role_flag;
+            if (currentRole !== 2 && currentRole !== 3) {
+                return { err: 'not_staff' };
+            }
+            await conn.execute(`UPDATE users SET ${updateFields.join(', ')} WHERE email = ?`, updateValues);
+            const [updatedUsers] = (await conn.execute('SELECT email, name_kanji, name_kana, tel, org_id, remarks, role_flag, created_at, updated_at FROM users WHERE email = ?', [email]));
+            return { err: null, staff: updatedUsers[0] };
+        });
+        if (result.err === 'not_found') {
+            return (0, response_1.errorResponse)('NOT_FOUND', 'Staff not found', 404);
+        }
+        if (result.err === 'not_staff') {
+            return (0, response_1.errorResponse)('BAD_REQUEST', 'User is not a staff or admin', 400);
+        }
         return (0, response_1.successResponse)({
-            staff: updatedUsers[0],
+            staff: result.staff,
             message: 'Staff updated successfully',
         });
     }

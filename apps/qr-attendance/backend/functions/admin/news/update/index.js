@@ -25,7 +25,7 @@ async function handler(event) {
       return (0, response_1.errorResponse)('BAD_REQUEST', 'Request body is required', 400);
     }
     const body = JSON.parse(event.body);
-    const { title, content, published_at, expired_at } = body;
+    const { title, content, is_published, announcement_type, published_at, expired_at } = body;
 
     const db = (0, connection_1.getDB)();
     const [existing] = await db.execute('SELECT id FROM news WHERE id = ?', [id]);
@@ -48,6 +48,15 @@ async function handler(event) {
       }
       updates.push('content = ?');
       values.push(String(content).trim());
+    }
+    if (is_published !== undefined) {
+      updates.push('is_published = ?');
+      values.push(is_published === true || is_published === 1 ? 1 : 0);
+    }
+    if (announcement_type !== undefined) {
+      const typeVal = announcement_type === 2 || announcement_type === '2' || announcement_type === 'important' ? 2 : 1;
+      updates.push('announcement_type = ?');
+      values.push(typeVal);
     }
     if (published_at !== undefined) {
       const d = new Date(published_at);
@@ -75,12 +84,14 @@ async function handler(event) {
     }
     values.push(id);
     await db.execute('UPDATE news SET ' + updates.join(', ') + ' WHERE id = ?', values);
-    const [rows] = await db.execute('SELECT id, title, content, published_at, expired_at, created_at, updated_at FROM news WHERE id = ?', [id]);
+    const [rows] = await db.execute('SELECT id, title, content, COALESCE(is_published,1) AS is_published, COALESCE(announcement_type,1) AS announcement_type, published_at, expired_at, created_at, updated_at FROM news WHERE id = ?', [id]);
     const row = rows && rows[0];
     const newsItem = row ? {
       id: row.id,
       title: row.title,
       content: row.content,
+      is_published: row.is_published === 1,
+      announcement_type: row.announcement_type,
       published_at: row.published_at,
       expired_at: row.expired_at,
       created_at: row.created_at,

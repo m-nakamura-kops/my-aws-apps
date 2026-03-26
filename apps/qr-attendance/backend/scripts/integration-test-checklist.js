@@ -204,7 +204,6 @@ async function run() {
   try {
     const { status } = await request('POST', '/v1/admin/students', {
       email: newStudentEmail,
-      password: 'TestPass12',
       name_kanji: '生徒テスト',
       name_kana: 'セイトテスト',
       tel: '090-0000-0010',
@@ -221,7 +220,6 @@ async function run() {
   try {
     const { status } = await request('POST', '/v1/admin/students', {
       email: 'other@example.com',
-      password: 'TestPass12',
       name_kanji: '他',
       name_kana: 'ホカ',
       tel: '090-0000-0011',
@@ -232,6 +230,30 @@ async function run() {
   } catch (e) {
     results.push({ no: '2.2.2', pass: false, msg: '2.2.2 権限外', error: e.message });
     console.log('NG 2.2.2', e.message);
+  }
+
+  // 2.2.3 生徒削除 +含有メール（パス encodeURIComponent）200
+  const plusStudentEmail = `it+student-${Date.now()}@example.com`;
+  try {
+    const { status: cst } = await request('POST', '/v1/admin/students', {
+      email: plusStudentEmail,
+      name_kanji: 'プラステスト',
+      name_kana: 'プラステスト',
+      tel: '090-0000-0098',
+    }, adminToken);
+    if (cst !== 201) {
+      results.push({ no: '2.2.3', pass: false, msg: '2.2.3 前提: 生徒作成', error: `expected 201 got ${cst}` });
+      console.log('NG 2.2.3 前提作成', cst);
+    } else {
+      const delPath = `/v1/admin/students/${encodeURIComponent(plusStudentEmail)}`;
+      const { status: dst } = await request('DELETE', delPath, null, adminToken);
+      const r = ok(dst, 200, '2.2.3 生徒削除 +含有メール（URLエンコード）');
+      results.push({ no: '2.2.3', ...r });
+      console.log(r.pass ? 'OK' : 'NG', '2.2.3', r.msg, r.pass ? '' : `expected 200 got ${r.actual}`);
+    }
+  } catch (e) {
+    results.push({ no: '2.2.3', pass: false, msg: '2.2.3 生徒削除+', error: e.message });
+    console.log('NG 2.2.3', e.message);
   }
 
   // 2.3.1 生徒CSV インポート成功 200
@@ -291,10 +313,10 @@ async function run() {
     console.log('NG 3.1.2', e.message);
   }
 
-  // 3.1.3 スタッフ管理 権限剥奪 200（DELETE staffs/{email} → 利用者に変更）
+  // 3.1.3 スタッフ管理 権限剥奪 200（PUT staffs/{email} role_flag:1 → 利用者に変更）
   // 注意: 実行後は it-staff が利用者になるため、以降のテストでスタッフトークンは使わない
   try {
-    const { status } = await request('DELETE', `/v1/admin/staffs/${encodeURIComponent(STAFF.email)}`, null, adminToken);
+    const { status } = await request('PUT', `/v1/admin/staffs/${encodeURIComponent(STAFF.email)}`, { role_flag: 1 }, adminToken);
     const r = ok(status, 200, '3.1.3 スタッフ管理 権限剥奪');
     results.push({ no: '3.1.3', ...r });
     console.log(r.pass ? 'OK' : 'NG', '3.1.3', r.msg, r.pass ? '' : `expected 200 got ${r.actual}`);

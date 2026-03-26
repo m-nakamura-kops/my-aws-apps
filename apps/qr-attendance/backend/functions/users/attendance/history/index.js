@@ -2,7 +2,7 @@
 /**
  * 打刻履歴取得Lambda関数
  * GET /v1/users/attendance/history
- * 権限マトリクス: 利用者・スタッフ・管理者とも「自分の打刻履歴」のみ取得可能。
+ * 権限マトリクスに従い、利用者・スタッフ・管理者とも「自分の打刻履歴」のみ取得可能。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
@@ -21,20 +21,17 @@ const handler = async (event) => {
         let offset = queryParams.offset ? parseInt(queryParams.offset, 10) : 0;
         const startDate = queryParams.start_date;
         const endDate = queryParams.end_date;
-
         if (isNaN(limit) || limit < 1 || limit > 1000)
             limit = 100;
         if (isNaN(offset) || offset < 0)
             offset = 0;
-
         await (0, secrets_1.initDBFromSecrets)();
-        const db = (0, connection_1.getDB)();
-
+        const pool = (0, connection_1.getDB)();
         const requestEmail = (0, auth_1.getUserEmailFromRequest)(event);
         if (!requestEmail) {
             return (0, response_1.errorResponse)('UNAUTHORIZED', 'Authentication required', 401);
         }
-
+        // 権限マトリクス: 自分の打刻履歴の閲覧は全ロールとも本人のみ
         const emailFilter = requestEmail;
         const params = [];
         let whereClause = '';
@@ -54,11 +51,9 @@ const handler = async (event) => {
             whereClause += whereClause ? ' AND al.in_time <= ?' : ' WHERE al.in_time <= ?';
             params.push(endDate);
         }
-
         const limitInt = Math.min(1000, Math.max(1, limit));
         const offsetInt = Math.max(0, offset);
-
-        let query = `
+        const query = `
       SELECT 
         al.log_id,
         al.email,
@@ -78,12 +73,13 @@ const handler = async (event) => {
       INNER JOIN users staff ON al.staff_email = staff.email
       ${whereClause}
       ORDER BY al.in_time DESC LIMIT ${limitInt} OFFSET ${offsetInt}`;
-        const [logs] = await db.execute(query, params);
-
-        let countQuery = `SELECT COUNT(*) as total FROM attendance_logs al ${whereClause}`;
-        const [countResult] = await db.execute(countQuery, params);
+        const [logs, countResult] = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [l] = (await conn.execute(query, params));
+            const countQuery = `SELECT COUNT(*) as total FROM attendance_logs al ${whereClause}`;
+            const [c] = (await conn.execute(countQuery, params));
+            return [l, c];
+        });
         const total = countResult[0]?.total || 0;
-
         return (0, response_1.successResponse)({
             logs: logs.map((log) => ({
                 log_id: log.log_id,

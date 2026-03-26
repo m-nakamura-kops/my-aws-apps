@@ -1,5 +1,10 @@
 'use client';
 
+/**
+ * No.6.4.3 利用者：イベント詳細・申込 (/events/[eventId])
+ * 詳細画面での申込・取消ロジックの実装。
+ */
+
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -95,8 +100,18 @@ export default function EventDetailPage() {
         }
       }
 
-      // イベントの総申込数を取得（管理者用のAPIが必要ですが、簡易的に申込一覧から取得）
-      // 実際には管理者用APIが必要ですが、今回は簡易実装
+      // イベントの申込数（定員表示用）
+      try {
+        const countRes = await apiClient.getRegistrations({
+          event_id: eventId,
+          limit: 1,
+          offset: 0,
+        });
+        const total = countRes.pagination?.total ?? countRes.registrations?.length ?? 0;
+        setCurrentRegistrations(total);
+      } catch {
+        setCurrentRegistrations(0);
+      }
     } catch (err: any) {
       console.error('Failed to load event data:', err);
       setError(err.message || 'イベント情報の取得に失敗しました');
@@ -204,12 +219,17 @@ export default function EventDetailPage() {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* ヘッダー */}
         <div className="mb-6">
-          <button
-            onClick={() => router.push('/events')}
-            className="text-indigo-600 hover:text-indigo-800 mb-4"
-          >
-            ← イベント一覧に戻る
-          </button>
+          <div className="flex flex-wrap gap-4 mb-4">
+            <button
+              onClick={() => router.push('/events')}
+              className="text-indigo-600 hover:text-indigo-800"
+            >
+              ← イベント一覧に戻る
+            </button>
+            <Link href="/home" className="text-gray-600 hover:text-gray-800">
+              ホームに戻る
+            </Link>
+          </div>
           <h1 className="text-3xl font-bold text-gray-900">{event.event_name}</h1>
         </div>
 

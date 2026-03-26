@@ -5,7 +5,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../shared/db/connection';
+import { getDB, withConnection } from '../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../shared/utils/response';
 import { checkStaffOrAdminPermission } from '../../../shared/utils/auth';
@@ -40,16 +40,18 @@ export const handler = async (
     }
 
     const likePattern = `%${escapeLike(q)}%`;
-    const db = getDB();
-    const [rows] = await db.execute(
-      `SELECT email AS user_id, name_kanji, name_kana, email
+    const pool = getDB();
+    const [rows] = (await withConnection(pool, async (conn) =>
+      conn.execute(
+        `SELECT email AS user_id, name_kanji, name_kana, email
        FROM users
        WHERE role_flag = ?
          AND (name_kanji LIKE ? OR name_kana LIKE ?)
        ORDER BY name_kana ASC
        LIMIT 50`,
-      [UserRole.USER, likePattern, likePattern]
-    ) as any[];
+        [UserRole.USER, likePattern, likePattern]
+      )
+    )) as any[];
 
     const users = (rows || []).map((r: any) => ({
       user_id: r.user_id,

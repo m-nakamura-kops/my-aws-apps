@@ -52,18 +52,24 @@ const handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') {
         return (0, response_1.corsResponse)();
     }
+    // モジュール読み込み時の Cognito 利用判定（Lambda 環境変数が空だと DB ハッシュ比較に落ちる）
+    console.log('[login] useCognito=', useCognito, {
+        USER_POOL_ID_set: Boolean(userPoolId),
+        COGNITO_CLIENT_ID_set: Boolean(cognitoClientId),
+    });
     try {
         // リクエストボディの解析
         if (!event.body) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Request body is required', 400);
         }
-        let email, password;
+        let email;
+        let password;
         try {
             const body = JSON.parse(event.body);
-            email = (body && body.email) ? body.email : '';
-            password = (body && body.password) ? body.password : '';
+            email = body?.email ?? '';
+            password = body?.password ?? '';
         }
-        catch (_) {
+        catch {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Invalid JSON body', 400);
         }
         if (!email || !password) {
@@ -71,13 +77,22 @@ const handler = async (event) => {
         }
         // データベース接続を初期化
         await (0, secrets_1.initDBFromSecrets)();
-        const db = (0, connection_1.getDB)();
-        // ユーザー情報を取得
-        const [users] = await db.execute('SELECT email, password, name_kanji, name_kana, org_id, role_flag FROM users WHERE email = ?', [email]);
+        const pool = (0, connection_1.getDB)();
+        // ユーザー情報を取得（is_active カラム未導入の DB でも動作するよう SELECT に含めない）
+        const [users] = (await (0, connection_1.withConnection)(pool, async (conn) => conn.execute('SELECT email, password, name_kanji, name_kana, org_id, role_flag FROM users WHERE email = ?', [email])));
         if (users.length === 0) {
+            console.log('[login] DB: no row for email=', email, '(seed-test-users がこの RDS に届いていない可能性)');
             return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
         }
         const user = users[0];
+        // パスワード値はログに出さず、デバッグ用に行の存在と role のみ
+        console.log('User found in DB:', {
+            email: user.email,
+            name_kanji: user.name_kanji,
+            org_id: user.org_id,
+            role_flag: user.role_flag,
+            password_stored_length: user.password != null ? String(user.password).length : 0,
+        });
         // 認証処理
         let authToken = '';
         let refreshToken = '';
@@ -93,6 +108,15 @@ const handler = async (event) => {
                     },
                 });
                 const authResponse = await cognitoClient.send(authCommand);
+                if (authResponse.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
+                    return (0, response_1.successResponse)({
+                        challengeName: 'NEW_PASSWORD_REQUIRED',
+                        session: authResponse.Session,
+                        email,
+                        userName: user.name_kanji || email,
+                        roleFlag: user.role_flag || 1,
+                    });
+                }
                 if (!authResponse.AuthenticationResult) {
                     return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid credentials', 401);
                 }
@@ -140,10 +164,14 @@ const handler = async (event) => {
         if (error.name === 'NotAuthorizedException' || error.name === 'UserNotFoundException') {
             return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
         }
-        // DB接続エラー（ローカルでMySQL未起動など）
-        const code = (error && error.code) || (error && error.errno);
+        // DB接続エラー（ローカルでMySQL未起動・Too many connections等）
+        const code = error?.code ?? error?.errno;
+        const msg = error?.message ?? '';
         if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ETIMEDOUT' || code === 'ER_ACCESS_DENIED_ERROR') {
             return (0, response_1.errorResponse)('SERVICE_UNAVAILABLE', 'Database connection failed. Ensure MySQL is running and DB_HOST/DB_USER/DB_PASSWORD/DB_NAME are set.', 503, error.message);
+        }
+        if (code === 'ER_CON_COUNT_ERROR' || (typeof msg === 'string' && msg.includes('Too many connections'))) {
+            return (0, response_1.errorResponse)('SERVICE_UNAVAILABLE', 'Database is busy (too many connections). Please retry in a moment.', 503, error.message);
         }
         // その他のエラー
         return (0, response_1.errorResponse)('INTERNAL_ERROR', 'An internal error occurred', 500, error.message);

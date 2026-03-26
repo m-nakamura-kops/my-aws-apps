@@ -4,11 +4,11 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
-import * as crypto from 'crypto';
+import { parseEmailPathParamForDb } from '../../../../shared/utils/parse-path-email';
 
 export const handler = async (
   event: APIGatewayProxyEvent
@@ -26,35 +26,25 @@ export const handler = async (
       return errorResponse('FORBIDDEN', permissionCheck.error || 'Admin access required', 403);
     }
 
-    // パスパラメータからemailを取得
-    const email = event.pathParameters?.email;
-    if (!email) {
-      return errorResponse('BAD_REQUEST', 'email is required', 400);
+    const rawEmail = event.pathParameters?.email;
+    const parsed = parseEmailPathParamForDb(rawEmail);
+    if (!parsed.ok) {
+      return errorResponse(
+        'BAD_REQUEST',
+        parsed.reason === 'decodeURIComponent_error'
+          ? 'Invalid email encoding in path'
+          : 'email is required',
+        400
+      );
     }
+    const email = parsed.email;
 
     // リクエストボディの解析
     if (!event.body) {
       return errorResponse('BAD_REQUEST', 'Request body is required', 400);
     }
 
-    const { name_kanji, name_kana, tel, org_id, remarks, password } = JSON.parse(event.body);
-
-    // データベース接続を取得
-    const db = getDB();
-
-    // ユーザーの存在確認（role_flag = 1: 生徒であることを確認）
-    const [existingUsers] = await db.execute(
-      'SELECT email, role_flag FROM users WHERE email = ?',
-      [email]
-    ) as any[];
-
-    if (existingUsers.length === 0) {
-      return errorResponse('NOT_FOUND', 'Student not found', 404);
-    }
-
-    if (existingUsers[0].role_flag !== 1) {
-      return errorResponse('BAD_REQUEST', 'User is not a student', 400);
-    }
+    const { name_kanji, name_kana, tel, org_id, remarks, is_active } = JSON.parse(event.body);
 
     // 更新フィールドの構築
     const updateFields: string[] = [];
@@ -80,11 +70,9 @@ export const handler = async (
       updateFields.push('remarks = ?');
       updateValues.push(remarks);
     }
-    if (password !== undefined) {
-      // パスワードのハッシュ化
-      const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
-      updateFields.push('password = ?');
-      updateValues.push(hashedPassword);
+    if (is_active !== undefined) {
+      updateFields.push('is_active = ?');
+      updateValues.push(is_active ? 1 : 0);
     }
 
     if (updateFields.length === 0) {
@@ -93,20 +81,35 @@ export const handler = async (
 
     updateValues.push(email);
 
-    // 更新実行
-    await db.execute(
-      `UPDATE users SET ${updateFields.join(', ')} WHERE email = ?`,
-      updateValues
-    );
+    const pool = getDB();
+    const updatedUsers = await withConnection(pool, async (conn) => {
+      const [existingUsers] = (await conn.execute(
+        'SELECT email, role_flag FROM users WHERE email = ?',
+        [email]
+      )) as any[];
+      if (existingUsers.length === 0) {
+        return { err: 'not_found' as const };
+      }
+      if (existingUsers[0].role_flag !== 1) {
+        return { err: 'not_student' as const };
+      }
+      await conn.execute(`UPDATE users SET ${updateFields.join(', ')} WHERE email = ?`, updateValues);
+      const [rows] = (await conn.execute(
+        'SELECT email, name_kanji, name_kana, tel, org_id, remarks, created_at, updated_at FROM users WHERE email = ?',
+        [email]
+      )) as any[];
+      return { err: null, student: rows[0] };
+    });
 
-    // 更新後のユーザー情報を取得
-    const [updatedUsers] = await db.execute(
-      'SELECT email, name_kanji, name_kana, tel, org_id, remarks, created_at, updated_at FROM users WHERE email = ?',
-      [email]
-    ) as any[];
+    if (updatedUsers.err === 'not_found') {
+      return errorResponse('NOT_FOUND', 'Student not found', 404);
+    }
+    if (updatedUsers.err === 'not_student') {
+      return errorResponse('BAD_REQUEST', 'User is not a student', 400);
+    }
 
     return successResponse({
-      student: updatedUsers[0],
+      student: updatedUsers.student,
       message: 'Student updated successfully',
     });
   } catch (error: any) {

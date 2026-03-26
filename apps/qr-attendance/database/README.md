@@ -55,6 +55,14 @@ mysql -u root -p qr_attendance < migrations/002_add_attendance_logs_notes.sql   
 mysql -u root -p qr_attendance < migrations/003_add_unique_event_email_attendance_logs.sql   # 二重打刻防止 UNIQUE
 ```
 
+**既に重複データがある場合**: UNIQUE 追加前に重複を解消する必要があります。以下を実行してください。
+
+```bash
+cd apps/qr-attendance/backend && node scripts/dedup-attendance-and-add-unique.js
+```
+
+このスクリプトは同一 (event_id, email) の複数行のうち `log_id` が最小の1件を残して他を削除し、続けて `uk_event_email` を追加します。
+
 ### 接続情報
 
 本番環境ではAmazon RDSを使用します。接続情報は環境変数で管理してください。

@@ -306,7 +306,7 @@ function AttendancePageContent() {
             <p className="text-lg text-gray-600">QRコードをスキャンして入退室の打刻を行います</p>
           </div>
           <Link
-            href="/"
+            href="/home"
             className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
           >
             ホームに戻る

@@ -4,7 +4,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
@@ -37,19 +37,6 @@ export const handler = async (
     }
 
     const { event_name, event_date, location, capacity, summary } = JSON.parse(event.body);
-
-    // データベース接続を取得（既に初期化済み）
-    const db = getDB();
-
-    // イベントの存在確認
-    const [existingEvents] = await db.execute(
-      'SELECT * FROM events WHERE event_id = ?',
-      [eventId]
-    ) as any[];
-
-    if (existingEvents.length === 0) {
-      return errorResponse('NOT_FOUND', 'Event not found', 404);
-    }
 
     // 更新フィールドの構築
     const updateFields: string[] = [];
@@ -87,20 +74,23 @@ export const handler = async (
 
     updateValues.push(eventId);
 
-    // イベント更新
-    await db.execute(
-      `UPDATE events SET ${updateFields.join(', ')} WHERE event_id = ?`,
-      updateValues
-    );
+    const pool = getDB();
+    const updated = await withConnection(pool, async (conn) => {
+      const [existingEvents] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId])) as any[];
+      if (existingEvents.length === 0) {
+        return { err: 'not_found' as const };
+      }
+      await conn.execute(`UPDATE events SET ${updateFields.join(', ')} WHERE event_id = ?`, updateValues);
+      const [updatedEvents] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId])) as any[];
+      return { err: null, event: updatedEvents[0] };
+    });
 
-    // 更新されたイベントを取得
-    const [updatedEvents] = await db.execute(
-      'SELECT * FROM events WHERE event_id = ?',
-      [eventId]
-    ) as any[];
+    if (updated.err === 'not_found') {
+      return errorResponse('NOT_FOUND', 'Event not found', 404);
+    }
 
     return successResponse({
-      event: updatedEvents[0],
+      event: updated.event,
     });
   } catch (error: any) {
     console.error('Update event error:', error);

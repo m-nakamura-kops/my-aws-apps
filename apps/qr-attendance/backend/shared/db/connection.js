@@ -11,8 +11,21 @@ exports.initDB = initDB;
 exports.getDBConfig = getDBConfig;
 exports.getDB = getDB;
 exports.closeDB = closeDB;
+exports.withConnection = withConnection;
 const promise_1 = __importDefault(require("mysql2/promise"));
 let pool = null;
+/**
+ * プールから接続を1本取得し、必ず release する（全 Lambda 共通）
+ */
+async function withConnection(pool, fn) {
+    const conn = await pool.getConnection();
+    try {
+        return await fn(conn);
+    }
+    finally {
+        conn.release();
+    }
+}
 /**
  * データベース接続プールの初期化
  */
@@ -20,6 +33,10 @@ function initDB(config) {
     if (pool) {
         return pool;
     }
+    const rawLimit = parseInt(process.env.CONNECTION_LIMIT || '5', 10);
+    const connectionLimit = Number.isNaN(rawLimit)
+        ? 5
+        : Math.min(Math.max(1, rawLimit), 5);
     pool = promise_1.default.createPool({
         host: config.host,
         port: config.port,
@@ -27,8 +44,11 @@ function initDB(config) {
         password: config.password,
         database: config.database,
         waitForConnections: true,
-        connectionLimit: 10,
+        connectionLimit,
         queueLimit: 0,
+        idleTimeout: 60000,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 0,
         ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
     });
     return pool;
@@ -64,3 +84,4 @@ async function closeDB() {
         pool = null;
     }
 }
+//# sourceMappingURL=connection.js.map

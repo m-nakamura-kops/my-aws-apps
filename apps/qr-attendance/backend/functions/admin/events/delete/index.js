@@ -26,15 +26,18 @@ const handler = async (event) => {
         if (!eventId) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'eventId is required', 400);
         }
-        // データベース接続を取得（既に初期化済み）
-        const db = (0, connection_1.getDB)();
-        // イベントの存在確認
-        const [existingEvents] = await db.execute('SELECT * FROM events WHERE event_id = ?', [eventId]);
-        if (existingEvents.length === 0) {
+        const pool = (0, connection_1.getDB)();
+        const found = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [existingEvents] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId]));
+            if (existingEvents.length === 0) {
+                return false;
+            }
+            await conn.execute('DELETE FROM events WHERE event_id = ?', [eventId]);
+            return true;
+        });
+        if (!found) {
             return (0, response_1.errorResponse)('NOT_FOUND', 'Event not found', 404);
         }
-        // イベント削除（CASCADEにより関連するregistrationsとattendance_logsも削除される）
-        await db.execute('DELETE FROM events WHERE event_id = ?', [eventId]);
         return (0, response_1.successResponse)({
             message: 'Event deleted successfully',
             eventId: parseInt(eventId, 10),

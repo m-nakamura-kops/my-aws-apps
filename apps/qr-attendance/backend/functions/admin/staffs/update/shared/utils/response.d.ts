@@ -11,16 +11,11 @@ export interface ApiError {
     message: string;
     details?: any;
 }
-/**
- * 成功レスポンスを生成
- */
+export declare function getCorsAllowOrigin(): string;
+export declare function normalizeApiGatewayHeaders(input: Record<string, string | number | boolean | undefined | null>): Record<string, string>;
+export declare function safeJsonStringify(value: unknown): string;
+export declare function corsHeaders(): Record<string, string>;
 export declare function successResponse<T>(data: T, statusCode?: number): ApiResponse<T>;
-/**
- * エラーレスポンスを生成
- */
 export declare function errorResponse(error: string, message: string, statusCode?: number, details?: any): ApiResponse<ApiError>;
-/**
- * CORS用のOPTIONSレスポンス
- */
 export declare function corsResponse(): ApiResponse;
 //# sourceMappingURL=response.d.ts.map

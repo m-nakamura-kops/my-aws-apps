@@ -3,46 +3,13 @@
  * 生徒情報更新Lambda関数
  * PUT /v1/admin/students/{email}
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
 const connection_1 = require('./shared/db/connection');
 const secrets_1 = require('./shared/db/secrets');
 const response_1 = require('./shared/utils/response');
 const auth_1 = require('./shared/utils/auth');
-const crypto = __importStar(require("crypto"));
+const parse_path_email_1 = require('./shared/utils/parse-path-email');
 const handler = async (event) => {
     // CORSプリフライトリクエスト対応
     if (event.httpMethod === 'OPTIONS') {
@@ -55,26 +22,19 @@ const handler = async (event) => {
         if (!permissionCheck.authorized) {
             return (0, response_1.errorResponse)('FORBIDDEN', permissionCheck.error || 'Admin access required', 403);
         }
-        // パスパラメータからemailを取得
-        const email = event.pathParameters?.email;
-        if (!email) {
-            return (0, response_1.errorResponse)('BAD_REQUEST', 'email is required', 400);
+        const rawEmail = event.pathParameters?.email;
+        const parsed = (0, parse_path_email_1.parseEmailPathParamForDb)(rawEmail);
+        if (!parsed.ok) {
+            return (0, response_1.errorResponse)('BAD_REQUEST', parsed.reason === 'decodeURIComponent_error'
+                ? 'Invalid email encoding in path'
+                : 'email is required', 400);
         }
+        const email = parsed.email;
         // リクエストボディの解析
         if (!event.body) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Request body is required', 400);
         }
-        const { name_kanji, name_kana, tel, org_id, remarks, password } = JSON.parse(event.body);
-        // データベース接続を取得
-        const db = (0, connection_1.getDB)();
-        // ユーザーの存在確認（role_flag = 1: 生徒であることを確認）
-        const [existingUsers] = await db.execute('SELECT email, role_flag FROM users WHERE email = ?', [email]);
-        if (existingUsers.length === 0) {
-            return (0, response_1.errorResponse)('NOT_FOUND', 'Student not found', 404);
-        }
-        if (existingUsers[0].role_flag !== 1) {
-            return (0, response_1.errorResponse)('BAD_REQUEST', 'User is not a student', 400);
-        }
+        const { name_kanji, name_kana, tel, org_id, remarks, is_active } = JSON.parse(event.body);
         // 更新フィールドの構築
         const updateFields = [];
         const updateValues = [];
@@ -98,22 +58,35 @@ const handler = async (event) => {
             updateFields.push('remarks = ?');
             updateValues.push(remarks);
         }
-        if (password !== undefined) {
-            // パスワードのハッシュ化
-            const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
-            updateFields.push('password = ?');
-            updateValues.push(hashedPassword);
+        if (is_active !== undefined) {
+            updateFields.push('is_active = ?');
+            updateValues.push(is_active ? 1 : 0);
         }
         if (updateFields.length === 0) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'No fields to update', 400);
         }
         updateValues.push(email);
-        // 更新実行
-        await db.execute(`UPDATE users SET ${updateFields.join(', ')} WHERE email = ?`, updateValues);
-        // 更新後のユーザー情報を取得
-        const [updatedUsers] = await db.execute('SELECT email, name_kanji, name_kana, tel, org_id, remarks, created_at, updated_at FROM users WHERE email = ?', [email]);
+        const pool = (0, connection_1.getDB)();
+        const updatedUsers = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [existingUsers] = (await conn.execute('SELECT email, role_flag FROM users WHERE email = ?', [email]));
+            if (existingUsers.length === 0) {
+                return { err: 'not_found' };
+            }
+            if (existingUsers[0].role_flag !== 1) {
+                return { err: 'not_student' };
+            }
+            await conn.execute(`UPDATE users SET ${updateFields.join(', ')} WHERE email = ?`, updateValues);
+            const [rows] = (await conn.execute('SELECT email, name_kanji, name_kana, tel, org_id, remarks, created_at, updated_at FROM users WHERE email = ?', [email]));
+            return { err: null, student: rows[0] };
+        });
+        if (updatedUsers.err === 'not_found') {
+            return (0, response_1.errorResponse)('NOT_FOUND', 'Student not found', 404);
+        }
+        if (updatedUsers.err === 'not_student') {
+            return (0, response_1.errorResponse)('BAD_REQUEST', 'User is not a student', 400);
+        }
         return (0, response_1.successResponse)({
-            student: updatedUsers[0],
+            student: updatedUsers.student,
             message: 'Student updated successfully',
         });
     }

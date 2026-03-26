@@ -6,23 +6,29 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getUserEmailFromRequest = getUserEmailFromRequest;
 exports.getUserRoleFlag = getUserRoleFlag;
 exports.checkAdminPermission = checkAdminPermission;
+exports.checkStaffOrAdminPermission = checkStaffOrAdminPermission;
 const connection_1 = require("../db/connection");
 const role_check_1 = require("./role-check");
 /**
  * リクエストからユーザーemailを取得
- * 優先順位: Authorizationヘッダー（JWT） > クエリパラメータ > リクエストボディ
+ * 優先順位: Authorizationヘッダー（JWT または ローカル用 base64 JSON） > クエリパラメータ > リクエストボディ
  */
 function getUserEmailFromRequest(event) {
-    // Authorizationヘッダーから取得（JWTトークンの場合）
     const authHeader = event.headers.Authorization || event.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
         try {
-            const token = authHeader.substring(7);
-            // JWTトークンをデコード（簡易実装）
-            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-            if (payload.email) {
-                return payload.email;
+            const token = authHeader.substring(7).trim();
+            // JWT形式（3部分）: payload は2番目の部分
+            const parts = token.split('.');
+            if (parts.length >= 2) {
+                const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+                if (payload.email)
+                    return payload.email;
             }
+            // ローカル開発用: トークン全体が base64 の JSON（email を含む）
+            const payload = JSON.parse(Buffer.from(token, 'base64').toString());
+            if (payload.email)
+                return payload.email;
         }
         catch (e) {
             // トークンの解析に失敗した場合は無視
@@ -50,8 +56,8 @@ function getUserEmailFromRequest(event) {
  * ユーザーのrole_flagを取得
  */
 async function getUserRoleFlag(email) {
-    const db = (0, connection_1.getDB)();
-    const [users] = await db.execute('SELECT role_flag FROM users WHERE email = ?', [email]);
+    const pool = (0, connection_1.getDB)();
+    const [users] = (await (0, connection_1.withConnection)(pool, async (conn) => conn.execute('SELECT role_flag FROM users WHERE email = ?', [email])));
     if (users.length === 0) {
         return null;
     }
@@ -80,5 +86,34 @@ async function checkAdminPermission(event) {
     return {
         authorized: true,
         email,
+    };
+}
+/**
+ * スタッフまたは管理者権限チェック
+ * 他エンドポイントで使い回すための共通関数。認証なし→401、権限不足→403。
+ */
+async function checkStaffOrAdminPermission(event) {
+    const email = getUserEmailFromRequest(event);
+    if (!email) {
+        return {
+            authorized: false,
+            email: null,
+            error: 'Authentication required',
+            statusCode: 401,
+        };
+    }
+    const roleFlag = await getUserRoleFlag(email);
+    if (!(0, role_check_1.isStaffOrAdmin)(roleFlag)) {
+        return {
+            authorized: false,
+            email,
+            error: 'Staff or Admin access required',
+            statusCode: 403,
+        };
+    }
+    return {
+        authorized: true,
+        email,
+        roleFlag: roleFlag,
     };
 }

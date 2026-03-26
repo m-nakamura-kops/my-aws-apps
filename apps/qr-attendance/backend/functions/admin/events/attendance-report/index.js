@@ -26,26 +26,18 @@ const handler = async (event) => {
         if (!eventId) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'eventId is required', 400);
         }
-        // データベース接続を取得（既に初期化済み）
-        const db = (0, connection_1.getDB)();
-        // イベントの存在確認
-        const [events] = await db.execute('SELECT * FROM events WHERE event_id = ?', [eventId]);
-        if (events.length === 0) {
-            return (0, response_1.errorResponse)('NOT_FOUND', 'Event not found', 404);
-        }
-        const eventData = events[0];
-        // 参加申込数
-        const [registrationCount] = await db.execute('SELECT COUNT(*) as count FROM registrations WHERE event_id = ?', [eventId]);
-        const totalRegistrations = registrationCount[0]?.count || 0;
-        // 出席者数（打刻履歴があるユーザー数）
-        const [attendanceCount] = await db.execute('SELECT COUNT(DISTINCT email) as count FROM attendance_logs WHERE event_id = ?', [eventId]);
-        const totalAttendees = attendanceCount[0]?.count || 0;
-        // 出席率の計算
-        const attendanceRate = totalRegistrations > 0
-            ? ((totalAttendees / totalRegistrations) * 100).toFixed(1)
-            : '0.0';
-        // 打刻履歴の詳細（ビューを使用）
-        const [attendanceLogs] = await db.execute(`SELECT 
+        const pool = (0, connection_1.getDB)();
+        const data = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [events] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId]));
+            if (events.length === 0) {
+                return { notFound: true };
+            }
+            const eventData = events[0];
+            const [registrationCount] = (await conn.execute('SELECT COUNT(*) as count FROM registrations WHERE event_id = ?', [eventId]));
+            const totalRegistrations = registrationCount[0]?.count || 0;
+            const [attendanceCount] = (await conn.execute('SELECT COUNT(DISTINCT email) as count FROM attendance_logs WHERE event_id = ?', [eventId]));
+            const totalAttendees = attendanceCount[0]?.count || 0;
+            const [attendanceLogs] = (await conn.execute(`SELECT 
         log_id,
         email,
         user_name,
@@ -56,35 +48,49 @@ const handler = async (event) => {
         staff_name
       FROM v_attendance_details
       WHERE event_id = ?
-      ORDER BY in_time DESC`, [eventId]);
-        // 出席状況の集計（時間帯別）
-        const [timeSlotStats] = await db.execute(`SELECT 
+      ORDER BY in_time DESC`, [eventId]));
+            const [timeSlotStats] = (await conn.execute(`SELECT 
         DATE_FORMAT(in_time, '%H:00') as time_slot,
         COUNT(*) as count
       FROM attendance_logs
       WHERE event_id = ?
       GROUP BY DATE_FORMAT(in_time, '%H:00')
-      ORDER BY time_slot`, [eventId]);
-        // 滞在時間の統計
-        const [stayStats] = await db.execute(`SELECT 
+      ORDER BY time_slot`, [eventId]));
+            const [stayStats] = (await conn.execute(`SELECT 
         AVG(stay_minutes) as avg_stay_minutes,
         MIN(stay_minutes) as min_stay_minutes,
         MAX(stay_minutes) as max_stay_minutes
       FROM v_attendance_details
-      WHERE event_id = ? AND stay_minutes IS NOT NULL`, [eventId]);
+      WHERE event_id = ? AND stay_minutes IS NOT NULL`, [eventId]));
+            return {
+                notFound: false,
+                eventData,
+                totalRegistrations,
+                totalAttendees,
+                attendanceLogs,
+                timeSlotStats,
+                stayStats,
+            };
+        });
+        if (data.notFound) {
+            return (0, response_1.errorResponse)('NOT_FOUND', 'Event not found', 404);
+        }
+        const attendanceRate = data.totalRegistrations > 0
+            ? ((data.totalAttendees / data.totalRegistrations) * 100).toFixed(1)
+            : '0.0';
         return (0, response_1.successResponse)({
             event_id: parseInt(eventId, 10),
-            event_name: eventData.event_name,
-            event_date: eventData.event_date,
-            location: eventData.location,
-            capacity: eventData.capacity,
+            event_name: data.eventData.event_name,
+            event_date: data.eventData.event_date,
+            location: data.eventData.location,
+            capacity: data.eventData.capacity,
             summary: {
-                total_registrations: totalRegistrations,
-                total_attendees: totalAttendees,
+                total_registrations: data.totalRegistrations,
+                total_attendees: data.totalAttendees,
                 attendance_rate: parseFloat(attendanceRate),
-                no_show_count: totalRegistrations - totalAttendees,
+                no_show_count: data.totalRegistrations - data.totalAttendees,
             },
-            attendance_logs: attendanceLogs.map((log) => ({
+            attendance_logs: data.attendanceLogs.map((log) => ({
                 log_id: log.log_id,
                 email: log.email,
                 user_name: log.user_name,
@@ -95,17 +101,19 @@ const handler = async (event) => {
                 staff_name: log.staff_name,
             })),
             statistics: {
-                time_slot_distribution: timeSlotStats.map((stat) => ({
+                time_slot_distribution: data.timeSlotStats.map((stat) => ({
                     time_slot: stat.time_slot,
                     count: stat.count,
                 })),
-                stay_duration: stayStats[0] ? {
-                    avg_minutes: stayStats[0].avg_stay_minutes
-                        ? Math.round(stayStats[0].avg_stay_minutes)
-                        : null,
-                    min_minutes: stayStats[0].min_stay_minutes || null,
-                    max_minutes: stayStats[0].max_stay_minutes || null,
-                } : null,
+                stay_duration: data.stayStats[0]
+                    ? {
+                        avg_minutes: data.stayStats[0].avg_stay_minutes
+                            ? Math.round(data.stayStats[0].avg_stay_minutes)
+                            : null,
+                        min_minutes: data.stayStats[0].min_stay_minutes || null,
+                        max_minutes: data.stayStats[0].max_stay_minutes || null,
+                    }
+                    : null,
             },
         });
     }

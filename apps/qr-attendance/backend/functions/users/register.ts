@@ -5,7 +5,7 @@
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { CognitoIdentityProviderClient, SignUpCommand, AdminConfirmSignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { getDB } from '../../shared/db/connection';
+import { getDB, withConnection } from '../../shared/db/connection';
 import { initDBFromSecrets } from '../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../shared/utils/response';
 
@@ -64,16 +64,18 @@ export const handler = async (
 
     // データベース接続を初期化
     await initDBFromSecrets();
-    const db = getDB();
+    const pool = getDB();
     try {
-      await db.execute(
-        `INSERT INTO users (email, password, name_kanji, name_kana, tel, role_flag)
+      await withConnection(pool, async (conn) =>
+        conn.execute(
+          `INSERT INTO users (email, password, name_kanji, name_kana, tel, role_flag)
          VALUES (?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
          name_kanji = VALUES(name_kanji),
          name_kana = VALUES(name_kana),
          tel = VALUES(tel)`,
-        [email, password, name_kanji, name_kana, tel, 1] // role_flag: 1 = 利用者
+          [email, password, name_kanji, name_kana, tel, 1]
+        )
       );
     } catch (dbError: any) {
       console.error('Database insert error:', dbError);

@@ -43,6 +43,7 @@ const connection_1 = require("./shared/db/connection");
 const secrets_1 = require("./shared/db/secrets");
 const response_1 = require("./shared/utils/response");
 const crypto = __importStar(require("crypto"));
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const cognitoClient = new client_cognito_identity_provider_1.CognitoIdentityProviderClient({ region: process.env.AWS_REGION || 'ap-northeast-1' });
 const userPoolId = process.env.USER_POOL_ID || '';
 const cognitoClientId = process.env.COGNITO_CLIENT_ID || '';
@@ -65,9 +66,8 @@ const handler = async (event) => {
         if (password.length < 8) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Password must be at least 8 characters', 400);
         }
-        // メール形式チェック（@ とドメイン必須）
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(String(email).trim())) {
+        // メール形式チェック
+        if (!EMAIL_REGEX.test(String(email).trim())) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Invalid email format', 400);
         }
         // パスワードのハッシュ化（データベースに保存するため）
@@ -113,23 +113,26 @@ const handler = async (event) => {
         }
         // データベース接続を初期化
         await (0, secrets_1.initDBFromSecrets)();
-        const db = (0, connection_1.getDB)();
-        // 重複チェック: 既に登録済みの場合は 409 を返す（上書きしない）
-        const [existing] = await db.execute('SELECT email FROM users WHERE email = ?', [email]);
-        if (existing.length > 0) {
-            return (0, response_1.errorResponse)('CONFLICT', 'User already exists', 409);
-        }
-        try {
-            await db.execute(`INSERT INTO users (email, password, name_kanji, name_kana, tel, role_flag)
-         VALUES (?, ?, ?, ?, ?, ?)`, [email, hashedPassword, name_kanji, name_kana, tel, 1] // role_flag: 1 = 利用者
-            );
-        }
-        catch (dbError) {
-            console.error('Database insert error:', dbError);
-            if (dbError.code === 'ER_DUP_ENTRY') {
-                return (0, response_1.errorResponse)('CONFLICT', 'User already exists', 409);
+        const pool = (0, connection_1.getDB)();
+        const dbResult = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [existing] = (await conn.execute('SELECT email FROM users WHERE email = ?', [email]));
+            if (existing.length > 0) {
+                return { ok: false, reason: 'exists' };
             }
-            throw dbError;
+            try {
+                await conn.execute(`INSERT INTO users (email, password, name_kanji, name_kana, tel, role_flag)
+           VALUES (?, ?, ?, ?, ?, ?)`, [email, hashedPassword, name_kanji, name_kana, tel, 1]);
+                return { ok: true };
+            }
+            catch (dbError) {
+                if (dbError.code === 'ER_DUP_ENTRY') {
+                    return { ok: false, reason: 'dup' };
+                }
+                throw dbError;
+            }
+        });
+        if (!dbResult.ok) {
+            return (0, response_1.errorResponse)('CONFLICT', 'User already exists', 409);
         }
         // レスポンス
         return (0, response_1.successResponse)({

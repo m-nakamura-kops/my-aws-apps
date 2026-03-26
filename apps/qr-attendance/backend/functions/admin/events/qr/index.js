@@ -60,14 +60,17 @@ const handler = async (event) => {
         if (!eventId) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'eventId is required', 400);
         }
-        // データベース接続を取得（既に初期化済み）
-        const db = (0, connection_1.getDB)();
-        // イベントの存在確認
-        const [events] = await db.execute('SELECT * FROM events WHERE event_id = ?', [eventId]);
-        if (events.length === 0) {
+        const pool = (0, connection_1.getDB)();
+        const eventData = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [events] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId]));
+            if (events.length === 0) {
+                return null;
+            }
+            return events[0];
+        });
+        if (!eventData) {
             return (0, response_1.errorResponse)('NOT_FOUND', 'Event not found', 404);
         }
-        const eventData = events[0];
         // QRコードデータを生成（イベントIDとシークレットキーを含む）
         // 本番環境では、より安全な方法でシークレットを管理する必要があります
         const secretKey = process.env.QR_SECRET_KEY || 'default-secret-key-change-in-production';

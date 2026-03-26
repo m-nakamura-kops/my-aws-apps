@@ -5,12 +5,22 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../../shared/db/secrets';
-import { errorResponse, corsResponse } from '../../../../../shared/utils/response';
+import {
+  errorResponse,
+  corsResponse,
+  corsHeaders,
+  normalizeApiGatewayHeaders,
+} from '../../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../../shared/utils/auth';
 
 const BOM = '\uFEFF';
+
+/** ファイル名に使えない文字をアンダースコアに置換（イベント名用） */
+function sanitizeFilename(name: string): string {
+  return String(name).replace(/[/\\:*?"<>|]/g, '_').trim() || 'イベント';
+}
 
 /** RFC 4180: カンマ・改行・ダブルクォートを含む場合は囲み、内部の " は "" にエスケープ */
 function escapeCsvField(value: string | number | null | undefined): string {
@@ -32,6 +42,12 @@ function formatDateTime(value: Date | string | null | undefined): string {
   const min = String(d.getMinutes()).padStart(2, '0');
   const sec = String(d.getSeconds()).padStart(2, '0');
   return `${y}-${m}-${day} ${h}:${min}:${sec}`;
+}
+
+/** 出席率を小数点第1位まで表示。申込0の場合は 0% を返す（0除算ガード） */
+function formatAttendanceRate(totalRegistrations: number, totalAttendees: number): string {
+  if (totalRegistrations === 0) return '0.0';
+  return ((totalAttendees / totalRegistrations) * 100).toFixed(1);
 }
 
 export const handler = async (
@@ -57,19 +73,18 @@ export const handler = async (
       return errorResponse('BAD_REQUEST', 'eventId is required', 400);
     }
 
-    const db = getDB();
+    const pool = getDB();
 
-    const [events] = await db.execute(
-      'SELECT event_id, event_name, event_date FROM events WHERE event_id = ?',
-      [eventId]
-    ) as any[];
-
-    if (events.length === 0) {
-      return errorResponse('NOT_FOUND', 'Event not found', 404);
-    }
-
-    const [rows] = await db.execute(
-      `SELECT
+    const { events, rows } = await withConnection(pool, async (conn) => {
+      const [ev] = (await conn.execute(
+        'SELECT event_id, event_name, event_date FROM events WHERE event_id = ?',
+        [eventId]
+      )) as any[];
+      if (ev.length === 0) {
+        return { events: ev, rows: [] as any[] };
+      }
+      const [r] = (await conn.execute(
+        `SELECT
   e.event_id,
   e.event_date,
   e.event_name,
@@ -89,8 +104,19 @@ LEFT JOIN (
 ) al ON al.event_id = r.event_id AND al.email = r.email
 WHERE r.event_id = ?
 ORDER BY r.created_at ASC`,
-      [eventId]
-    ) as any[];
+        [eventId]
+      )) as any[];
+      return { events: ev, rows: r || [] };
+    });
+
+    if (events.length === 0) {
+      return errorResponse('NOT_FOUND', 'Event not found', 404);
+    }
+
+    const totalRegistrations = (rows || []).length;
+    const totalAttendees = (rows || []).filter((r: any) => r.attendance_time != null).length;
+    const noShowCount = totalRegistrations - totalAttendees;
+    const attendanceRateStr = formatAttendanceRate(totalRegistrations, totalAttendees);
 
     const headerRow =
       'イベントID,開催日,イベント名,利用者名,ふりがな,メールアドレス,区分（生徒/一般）,申込日時,打刻日時（実績）';
@@ -107,30 +133,26 @@ ORDER BY r.created_at ASC`,
         r.attendance_time ? formatDateTime(r.attendance_time) : '',
       ].join(',')
     );
-    const csvContent = [headerRow, ...dataRows].join('\n');
+    const summaryHeader = '申込数,出席数,欠席数,出席率（%）';
+    const summaryRow = [totalRegistrations, totalAttendees, noShowCount, attendanceRateStr].join(',');
+    const csvContent = [headerRow, ...dataRows, '', summaryHeader, summaryRow].join('\n');
     const body = BOM + csvContent;
 
-    const eventDate = events[0].event_date;
-    const d =
-      typeof eventDate === 'string'
-        ? new Date(eventDate)
-        : (eventDate as Date);
-    const dateStr =
-      isNaN(d.getTime())
-        ? 'unknown'
-        : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const filename = `event_attendees_${eventId}_${dateStr}.csv`;
+    const eventName = events[0].event_name || '';
+    const now = new Date();
+    const outputDateStr =
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const safeEventName = sanitizeFilename(eventName);
+    const filename = `出席レポート_${safeEventName}_${outputDateStr}.csv`;
 
     return {
       statusCode: 200,
-      headers: {
+      headers: normalizeApiGatewayHeaders({
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="${filename}"`,
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-      },
-      body,
+        ...corsHeaders(),
+      }),
+      body: String(body),
     };
   } catch (error: any) {
     console.error('Event attendees CSV error:', error);

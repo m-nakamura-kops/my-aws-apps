@@ -1,9 +1,11 @@
 'use strict';
 /**
  * GET /v1/news - お知らせ一覧（利用者・スタッフ・管理者共通・要ログイン）
- * 条件: published_at <= NOW() AND (expired_at >= NOW() OR expired_at IS NULL)
- * 並び: published_at DESC
- * ページネーション: limit (default 10, 50可), page → totalCount, hasNextPage
+ * 表示条件（厳密）:
+ *   - COALESCE(is_published,1)=1（公開のみ）
+ *   - published_at <= NOW()（未来予約は1秒でも前なら一切出さない）
+ *   - expired_at IS NULL OR expired_at >= NOW()
+ * 並び: 新着順（created_at DESC）
  */
 const connection_1 = require('./shared/db/connection');
 const secrets_1 = require('./shared/db/secrets');
@@ -31,14 +33,33 @@ async function handler(event) {
 
     const db = (0, connection_1.getDB)();
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    const whereClause = ' WHERE published_at <= ? AND (expired_at IS NULL OR expired_at >= ?)';
-    const countSql = 'SELECT COUNT(*) as total FROM news' + whereClause;
-    const [countResult] = await db.execute(countSql, [now, now]);
-    const totalCount = countResult[0]?.total ?? 0;
+    let totalCount = 0;
+    let rows = [];
 
-    const listSql = 'SELECT id, title, content, published_at, expired_at, created_at, updated_at FROM news' +
-      whereClause + ' ORDER BY published_at DESC LIMIT ' + limit + ' OFFSET ' + offset;
-    const [rows] = await db.execute(listSql, [now, now]);
+    try {
+      const whereClause = ' WHERE COALESCE(is_published, 1) = 1 AND published_at <= ? AND (expired_at IS NULL OR expired_at >= ?)';
+      const countSql = 'SELECT COUNT(*) as total FROM news' + whereClause;
+      const [countResult] = await db.execute(countSql, [now, now]);
+      totalCount = countResult[0]?.total ?? 0;
+      const listSql = 'SELECT id, title, content, COALESCE(announcement_type, 1) AS announcement_type, published_at, expired_at, created_at, updated_at FROM news' +
+        whereClause + ' ORDER BY created_at DESC LIMIT ' + limit + ' OFFSET ' + offset;
+      const [listRows] = await db.execute(listSql, [now, now]);
+      rows = listRows || [];
+    } catch (schemaErr) {
+      const msg = schemaErr && typeof schemaErr === 'object' && 'message' in schemaErr ? schemaErr.message : String(schemaErr);
+      if (msg.indexOf('Unknown column') !== -1) {
+        const whereLegacy = ' WHERE published_at <= ? AND (expired_at IS NULL OR expired_at >= ?)';
+        const [countResult] = await db.execute('SELECT COUNT(*) as total FROM news' + whereLegacy, [now, now]);
+        totalCount = countResult[0]?.total ?? 0;
+        const [listRows] = await db.execute(
+          'SELECT id, title, content, published_at, expired_at, created_at, updated_at FROM news' + whereLegacy + ' ORDER BY created_at DESC LIMIT ' + limit + ' OFFSET ' + offset,
+          [now, now]
+        );
+        rows = (listRows || []).map((r) => ({ ...r, announcement_type: 1 }));
+      } else {
+        throw schemaErr;
+      }
+    }
 
     const hasNextPage = offset + rows.length < totalCount;
 

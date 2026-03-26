@@ -5,7 +5,7 @@
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { CognitoIdentityProviderClient, SignUpCommand, AdminConfirmSignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { getDB } from '../../../shared/db/connection';
+import { getDB, withConnection } from '../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../shared/utils/response';
 import * as crypto from 'crypto';
@@ -96,29 +96,30 @@ export const handler = async (
 
     // データベース接続を初期化
     await initDBFromSecrets();
-    const db = getDB();
+    const pool = getDB();
 
-    // 重複チェック: 既に登録済みの場合は 409 を返す（上書きしない）
-    const [existing] = await db.execute(
-      'SELECT email FROM users WHERE email = ?',
-      [email]
-    ) as any[];
-    if (existing.length > 0) {
-      return errorResponse('CONFLICT', 'User already exists', 409);
-    }
-
-    try {
-      await db.execute(
-        `INSERT INTO users (email, password, name_kanji, name_kana, tel, role_flag)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [email, hashedPassword, name_kanji, name_kana, tel, 1] // role_flag: 1 = 利用者
-      );
-    } catch (dbError: any) {
-      console.error('Database insert error:', dbError);
-      if (dbError.code === 'ER_DUP_ENTRY') {
-        return errorResponse('CONFLICT', 'User already exists', 409);
+    const dbResult = await withConnection(pool, async (conn) => {
+      const [existing] = (await conn.execute('SELECT email FROM users WHERE email = ?', [email])) as any[];
+      if (existing.length > 0) {
+        return { ok: false as const, reason: 'exists' as const };
       }
-      throw dbError;
+      try {
+        await conn.execute(
+          `INSERT INTO users (email, password, name_kanji, name_kana, tel, role_flag)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [email, hashedPassword, name_kanji, name_kana, tel, 1]
+        );
+        return { ok: true as const };
+      } catch (dbError: any) {
+        if (dbError.code === 'ER_DUP_ENTRY') {
+          return { ok: false as const, reason: 'dup' as const };
+        }
+        throw dbError;
+      }
+    });
+
+    if (!dbResult.ok) {
+      return errorResponse('CONFLICT', 'User already exists', 409);
     }
 
     // レスポンス

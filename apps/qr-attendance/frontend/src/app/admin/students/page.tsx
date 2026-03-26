@@ -11,6 +11,7 @@ import ErrorAlert from '@/components/ui/ErrorAlert';
 import SuccessAlert from '@/components/ui/SuccessAlert';
 import LoadingButton from '@/components/ui/LoadingButton';
 import TableSkeleton from '@/components/ui/TableSkeleton';
+import EmergencyMobileBanner from '@/components/ui/EmergencyMobileBanner';
 
 interface Student {
   email: string;
@@ -21,6 +22,7 @@ interface Student {
   remarks: string | null;
   registration_date: string;
   last_attendance_date: string | null;
+  is_active?: boolean;
 }
 
 function StudentsPageContent() {
@@ -50,12 +52,23 @@ function StudentsPageContent() {
     }
   }, [isAuthenticated]);
 
-  const loadStudents = async () => {
+  const loadStudents = async (options?: {
+    /** true のときテーブルをスケルトンにしない（削除直後などちらつき防止） */
+    silent?: boolean;
+    /** true のとき成功メッセージを消さない（削除成功トーストを維持） */
+    keepSuccess?: boolean;
+  }) => {
+    const silent = options?.silent ?? false;
+    const keepSuccess = options?.keepSuccess ?? false;
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       setError('');
-      setSuccess('');
-      const response = await apiClient.listStudents({ 
+      if (!keepSuccess) {
+        setSuccess('');
+      }
+      const response = await apiClient.listStudents({
         limit: 100,
         search: searchTerm || undefined,
       });
@@ -63,7 +76,9 @@ function StudentsPageContent() {
     } catch (err: any) {
       setError(err.message || '生徒の取得に失敗しました');
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -76,8 +91,12 @@ function StudentsPageContent() {
       setDeletingEmail(email);
       setError('');
       await apiClient.deleteStudent(email);
+      const key = email.trim();
+      // 削除成功を確定したうえでローカル状態を先に更新し、編集モーダル経由の PUT 等で「消えたID」へ触れないようにする
+      setStudents((prev) => prev.filter((s) => s.email.trim() !== key));
+      setEditingStudent((prev) => (prev && prev.email.trim() === key ? null : prev));
       setSuccess('生徒を削除しました');
-      await loadStudents();
+      await loadStudents({ silent: true, keepSuccess: true });
     } catch (err: any) {
       setError(err.message || '生徒の削除に失敗しました');
     } finally {
@@ -140,6 +159,7 @@ function StudentsPageContent() {
 
   return (
     <main className="min-h-screen p-8 bg-gray-50">
+      <EmergencyMobileBanner />
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <div>
@@ -148,7 +168,7 @@ function StudentsPageContent() {
           </div>
           <div className="flex gap-4">
             <Link
-              href="/"
+              href="/home"
               className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
             >
               ホームに戻る
@@ -255,73 +275,55 @@ function StudentsPageContent() {
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="overflow-x-auto">
+            {/* PC: テーブル（≥768px） */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      メールアドレス
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      氏名（漢字）
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      カナ
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      電話番号
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      組織ID
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      最終打刻日
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      操作
-                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">メールアドレス</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">氏名（漢字）</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">カナ</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">電話番号</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">入会日</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ステータス</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最終打刻日</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {students.map((student) => (
-                    <tr key={student.email} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {student.email}
+                  {students.map((s) => (
+                    <tr key={s.email} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{s.email}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{s.name_kanji}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{s.name_kana}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{s.tel}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDate(s.registration_date)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <span className={s.is_active === false ? 'text-gray-500' : 'text-green-600 font-medium'}>{s.is_active === false ? '退会' : '有効'}</span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {student.name_kanji}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {student.name_kana}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {student.tel}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {student.org_id || '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {formatDate(student.last_attendance_date)}
-                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDate(s.last_attendance_date)}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button
-                          onClick={() => setEditingStudent(student)}
-                          className="text-indigo-600 hover:text-indigo-900 mr-4"
-                        >
-                          編集
-                        </button>
-                        <button
-                          onClick={() => handleDelete(student.email)}
-                          disabled={deletingEmail === student.email}
-                          className="text-red-600 hover:text-red-900 disabled:opacity-50"
-                        >
-                          {deletingEmail === student.email ? '削除中...' : '削除'}
-                        </button>
+                        <button onClick={() => setEditingStudent(s)} className="text-indigo-600 hover:text-indigo-900 mr-4 min-h-[44px]">編集</button>
+                        <button onClick={() => handleDelete(s.email)} disabled={deletingEmail === s.email} className="text-red-600 hover:text-red-900 disabled:opacity-50 min-h-[44px]">{deletingEmail === s.email ? '削除中...' : '削除'}</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+            {/* スマホ: カード（<768px） */}
+            <div className="md:hidden divide-y divide-gray-200">
+              {students.map((s) => (
+                <div key={s.email} className="p-4 min-h-[44px]">
+                  <div className="font-medium text-gray-900">{s.name_kanji} {s.name_kana && <span className="text-gray-500 text-sm">({s.name_kana})</span>}</div>
+                  <div className="text-sm text-gray-500">{s.email}</div>
+                  <div className="text-sm text-gray-600 mt-1">入会日: {formatDate(s.registration_date)} · ステータス: {s.is_active === false ? '退会' : '有効'}</div>
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={() => setEditingStudent(s)} className="px-3 py-2 text-indigo-600 border border-indigo-600 rounded min-h-[44px]">編集</button>
+                    <button onClick={() => handleDelete(s.email)} disabled={deletingEmail === s.email} className="px-3 py-2 text-red-600 border border-red-600 rounded min-h-[44px] disabled:opacity-50">{deletingEmail === s.email ? '削除中...' : '削除'}</button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -332,8 +334,9 @@ function StudentsPageContent() {
         <StudentModal
           student={null}
           onClose={() => setShowCreateModal(false)}
-          onSuccess={() => {
+          onSuccess={(info) => {
             setShowCreateModal(false);
+            if (info?.message) setSuccess(info.message);
             loadStudents();
           }}
         />
@@ -371,6 +374,7 @@ function StudentModal({
     tel: student?.tel || '',
     org_id: student?.org_id || '',
     remarks: student?.remarks || '',
+    is_active: student ? student.is_active !== false : true,
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -382,31 +386,25 @@ function StudentModal({
 
     try {
       if (student) {
-        // 更新
         await apiClient.updateStudent(student.email, {
           name_kanji: formData.name_kanji,
           name_kana: formData.name_kana,
           tel: formData.tel,
           org_id: formData.org_id || undefined,
           remarks: formData.remarks || undefined,
-          password: formData.password || undefined,
+          is_active: formData.is_active,
         });
       } else {
-        // 作成
-        if (!formData.password) {
-          setError('パスワードは必須です');
-          setIsLoading(false);
-          return;
-        }
-        await apiClient.createStudent({
+        const res = await apiClient.createStudent({
           email: formData.email,
-          password: formData.password,
           name_kanji: formData.name_kanji,
           name_kana: formData.name_kana,
           tel: formData.tel,
           org_id: formData.org_id || undefined,
           remarks: formData.remarks || undefined,
         });
+        onSuccess({ message: res.message || '生徒を登録しました' });
+        return;
       }
       onSuccess();
     } catch (err: any) {
@@ -440,20 +438,9 @@ function StudentModal({
                   className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  パスワード <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  required={!student}
-                  minLength={8}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder={student ? '変更する場合のみ入力' : ''}
-                />
-              </div>
+              <p className="text-sm text-gray-600 bg-indigo-50 border border-indigo-100 rounded-md px-3 py-2">
+                登録後、入力したメール宛に Cognito から招待メール（仮パスワード）が届きます。本人が初回ログイン時にパスワードを設定してください。管理者はパスワードを設定・変更しません。
+              </p>
             </>
           )}
 
@@ -467,21 +454,6 @@ function StudentModal({
                 value={formData.email}
                 disabled
                 className="w-full px-4 py-2 border border-gray-300 rounded-md bg-gray-100"
-              />
-            </div>
-          )}
-
-          {student && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                パスワード（変更する場合のみ）
-              </label>
-              <input
-                type="password"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                minLength={8}
-                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
           )}
@@ -548,6 +520,19 @@ function StudentModal({
               className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
+
+          {student && (
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="is_active"
+                checked={formData.is_active}
+                onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <label htmlFor="is_active" className="text-sm font-medium text-gray-700">ステータス: 有効（チェック時） / 退会（未チェック）</label>
+            </div>
+          )}
 
           <div className="flex justify-end gap-4 pt-4">
             <button

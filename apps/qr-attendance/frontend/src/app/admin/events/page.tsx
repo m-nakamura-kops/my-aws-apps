@@ -1,5 +1,11 @@
 'use client';
 
+/**
+ * No.6.4.9 管理者：イベント管理一覧 (/admin/events)
+ * No.6.4.10 管理者：イベント編集（モーダル）
+ * 新規作成・一覧・編集・削除・QR・参加者・レポートへのハブ。入力バリデーション・削除確認・成功トーストあり。
+ */
+
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth, UserRole } from '@/contexts/AuthContext';
@@ -47,26 +53,26 @@ function EventsPageContent() {
       setSuccess('');
       const response = await apiClient.listEvents({ limit: 100 });
       setEvents(response.events);
-    } catch (err: any) {
-      setError(err.message || 'イベントの取得に失敗しました');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'イベントの取得に失敗しました');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDelete = async (eventId: number) => {
-    if (!confirm('このイベントを削除しますか？')) {
+  const handleDelete = async (event: Event) => {
+    if (!confirm(`イベント「${event.event_name}」を削除しますか？この操作は取り消せません。`)) {
       return;
     }
 
     try {
-      setDeletingEventId(eventId);
+      setDeletingEventId(event.event_id);
       setError('');
-      await apiClient.deleteEvent(eventId);
-      setSuccess('イベントを削除しました');
+      await apiClient.deleteEvent(event.event_id);
+      setSuccess('削除が完了しました');
       await loadEvents();
-    } catch (err: any) {
-      setError(err.message || 'イベントの削除に失敗しました');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'イベントの削除に失敗しました');
     } finally {
       setDeletingEventId(null);
     }
@@ -101,7 +107,7 @@ function EventsPageContent() {
           </div>
           <div className="flex gap-4">
             <Link
-              href="/"
+              href="/home"
               className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
             >
               ホームに戻る
@@ -116,9 +122,11 @@ function EventsPageContent() {
         </div>
 
         {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
-            <p className="text-red-800">{error}</p>
-          </div>
+          <ErrorAlert message={error} onDismiss={() => setError('')} className="mb-4" />
+        )}
+
+        {success && (
+          <SuccessAlert message={success} onDismiss={() => setSuccess('')} className="mb-4" />
         )}
 
         {loading ? (
@@ -187,37 +195,37 @@ function EventsPageContent() {
                         {event.capacity ? `${event.capacity}人` : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex justify-end gap-2 flex-wrap">
+                        <div className="flex justify-end gap-2 sm:gap-3 flex-wrap">
                           <button
                             onClick={() => setEditingEvent(event)}
-                            className="px-3 py-1 text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 rounded border border-indigo-200"
+                            className="min-h-[44px] px-3 py-2 text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 rounded border border-indigo-200 text-sm"
                           >
                             編集
                           </button>
                           <button
                             onClick={() => setQrCodeEvent(event)}
-                            className="px-3 py-1 text-green-600 hover:text-green-900 hover:bg-green-50 rounded border border-green-200"
+                            className="min-h-[44px] px-3 py-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded border border-green-200 text-sm"
                           >
                             QRコード
                           </button>
                           <Link
                             href={`/admin/events/${event.event_id}/participants`}
-                            className="px-3 py-1 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded border border-blue-200"
+                            className="min-h-[44px] inline-flex items-center px-3 py-2 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded border border-blue-200 text-sm"
                           >
                             参加者
                           </Link>
                           <Link
                             href={`/admin/events/${event.event_id}/attendance-report`}
-                            className="px-3 py-1 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded border border-purple-200"
+                            className="min-h-[44px] inline-flex items-center px-3 py-2 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded border border-purple-200 text-sm"
                           >
                             レポート
                           </Link>
                           <LoadingButton
-                            onClick={() => handleDelete(event.event_id)}
+                            onClick={() => handleDelete(event)}
                             loading={deletingEventId === event.event_id}
                             disabled={deletingEventId !== null}
                             variant="danger"
-                            className="px-3 py-1 text-sm"
+                            className="min-h-[44px] px-3 py-2 text-sm"
                           >
                             削除
                           </LoadingButton>
@@ -236,6 +244,7 @@ function EventsPageContent() {
             onClose={() => setShowCreateModal(false)}
             onSuccess={() => {
               setShowCreateModal(false);
+              setSuccess('作成が完了しました');
               loadEvents();
             }}
           />
@@ -247,6 +256,7 @@ function EventsPageContent() {
             onClose={() => setEditingEvent(null)}
             onSuccess={() => {
               setEditingEvent(null);
+              setSuccess('更新が完了しました');
               loadEvents();
             }}
           />
@@ -294,23 +304,35 @@ function EventEditModal({
     e.preventDefault();
     setError('');
 
-    if (!formData.event_name || !formData.event_date) {
-      setError('イベント名と開催日時は必須です');
+    const name = formData.event_name.trim();
+    if (!name) {
+      setError('イベント名を入力してください');
       return;
+    }
+    if (!formData.event_date) {
+      setError('開催日時を入力してください');
+      return;
+    }
+    if (formData.capacity.trim() !== '') {
+      const cap = parseInt(formData.capacity, 10);
+      if (Number.isNaN(cap) || cap < 1 || !Number.isInteger(cap)) {
+        setError('定員は1以上の整数で入力してください');
+        return;
+      }
     }
 
     try {
       setIsSubmitting(true);
       await apiClient.updateEvent(event.event_id, {
-        event_name: formData.event_name,
+        event_name: name,
         event_date: formData.event_date,
-        location: formData.location || undefined,
-        capacity: formData.capacity ? parseInt(formData.capacity, 10) : undefined,
-        summary: formData.summary || undefined,
+        location: formData.location.trim() || undefined,
+        capacity: formData.capacity.trim() ? parseInt(formData.capacity, 10) : undefined,
+        summary: formData.summary.trim() || undefined,
       });
       onSuccess();
-    } catch (err: any) {
-      setError(err.message || 'イベントの更新に失敗しました');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'イベントの更新に失敗しました');
     } finally {
       setIsSubmitting(false);
     }
@@ -453,23 +475,40 @@ function EventCreateModal({
     e.preventDefault();
     setError('');
 
-    if (!formData.event_name || !formData.event_date) {
-      setError('イベント名と開催日時は必須です');
+    const name = formData.event_name.trim();
+    if (!name) {
+      setError('イベント名を入力してください');
       return;
+    }
+    if (!formData.event_date) {
+      setError('開催日時を入力してください');
+      return;
+    }
+    const eventDate = new Date(formData.event_date);
+    if (eventDate.getTime() <= Date.now()) {
+      setError('開催日時は未来の日時を指定してください');
+      return;
+    }
+    if (formData.capacity.trim() !== '') {
+      const cap = parseInt(formData.capacity, 10);
+      if (Number.isNaN(cap) || cap < 1 || !Number.isInteger(cap)) {
+        setError('定員は1以上の整数で入力してください');
+        return;
+      }
     }
 
     try {
       setIsSubmitting(true);
       await apiClient.createEvent({
-        event_name: formData.event_name,
+        event_name: name,
         event_date: formData.event_date,
-        location: formData.location || undefined,
-        capacity: formData.capacity ? parseInt(formData.capacity, 10) : undefined,
+        location: formData.location.trim() || undefined,
+        capacity: formData.capacity.trim() ? parseInt(formData.capacity, 10) : undefined,
         summary: formData.summary || undefined,
       });
       onSuccess();
-    } catch (err: any) {
-      setError(err.message || 'イベントの作成に失敗しました');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'イベントの作成に失敗しました');
     } finally {
       setIsSubmitting(false);
     }
@@ -612,8 +651,8 @@ function QRCodeModal({
       setError('');
       const response = await apiClient.generateQRCode(event.event_id);
       setQrData(response);
-    } catch (err: any) {
-      setError(err.message || 'QRコードの生成に失敗しました');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'QRコードの生成に失敗しました');
     } finally {
       setLoading(false);
     }

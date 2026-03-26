@@ -231,12 +231,20 @@ function StaffScanPageContent() {
               利用者が表示したQRコードをスキャンして入退室を記録します
             </p>
           </div>
-          <Link
-            href="/"
-            className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 text-sm"
-          >
-            ホーム
-          </Link>
+          <div className="flex gap-2">
+            <Link
+              href="/staff/manual"
+              className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm"
+            >
+              QRが読めない場合はこちら
+            </Link>
+            <Link
+              href="/home"
+              className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 text-sm"
+            >
+              ホーム
+            </Link>
+          </div>
         </div>
 
         {error && <ErrorAlert message={error} onDismiss={() => setError('')} className="mb-4" />}

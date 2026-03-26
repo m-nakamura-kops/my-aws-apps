@@ -4,7 +4,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../shared/db/connection';
+import { getDB, withConnection } from '../../shared/db/connection';
 import { successResponse, errorResponse, corsResponse } from '../../shared/utils/response';
 
 /**
@@ -30,14 +30,10 @@ export const handler = async (
       return errorResponse('BAD_REQUEST', 'email parameter is required', 400);
     }
 
-    // データベース接続
-    const db = getDB();
-    
-    // ユーザー情報取得
-    const [rows] = await db.execute(
-      'SELECT email, name_kanji, name_kana, org_id FROM users WHERE email = ?',
-      [email]
-    );
+    const pool = getDB();
+    const [rows] = (await withConnection(pool, async (conn) =>
+      conn.execute('SELECT email, name_kanji, name_kana, org_id FROM users WHERE email = ?', [email])
+    )) as any[];
 
     const users = rows as any[];
     if (users.length === 0) {

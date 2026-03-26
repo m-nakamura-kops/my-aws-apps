@@ -2,6 +2,9 @@
 /**
  * スタッフ招待Lambda関数
  * POST /v1/admin/invite
+ *
+ * 管理者はメール等のみ指定。Cognito の招待メール（仮パスワード）を送信し、
+ * DB にはログインに使わないプレースホルダハッシュを保存する。
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -46,94 +49,82 @@ const auth_1 = require('./shared/utils/auth');
 const crypto = __importStar(require("crypto"));
 const cognitoClient = new client_cognito_identity_provider_1.CognitoIdentityProviderClient({ region: process.env.AWS_REGION || 'ap-northeast-1' });
 const userPoolId = process.env.USER_POOL_ID || '';
+/** Cognito 認証のみを使うため、DB には推測不能なダミーハッシュを入れる */
+function randomPlaceholderPasswordHash() {
+    const raw = crypto.randomBytes(32).toString('hex');
+    return crypto.createHash('sha256').update(raw).digest('hex');
+}
 const handler = async (event) => {
-    // CORSプリフライトリクエスト対応
     if (event.httpMethod === 'OPTIONS') {
         return (0, response_1.corsResponse)();
     }
     try {
-        // 管理者権限チェック
         await (0, secrets_1.initDBFromSecrets)();
         const permissionCheck = await (0, auth_1.checkAdminPermission)(event);
         if (!permissionCheck.authorized) {
             return (0, response_1.errorResponse)('FORBIDDEN', permissionCheck.error || 'Admin access required', 403);
         }
-        // リクエストボディの解析
         if (!event.body) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Request body is required', 400);
         }
-        const { email, password, name_kanji, name_kana, tel, org_id, remarks } = JSON.parse(event.body);
-        // バリデーション
+        const { email, name_kanji, name_kana, tel, org_id, remarks } = JSON.parse(event.body);
         if (!email) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'email is required', 400);
         }
-        // メールアドレスの形式チェック
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Invalid email format', 400);
         }
-        // データベース接続を取得
-        const db = (0, connection_1.getDB)();
-        // 既存ユーザーのチェック
-        const [existingUsers] = await db.execute('SELECT email, role_flag FROM users WHERE email = ?', [email]);
-        // パスワード生成（指定されていない場合）
-        let generatedPassword = password;
-        if (!generatedPassword) {
-            // ランダムパスワードを生成（12文字）
-            generatedPassword = crypto.randomBytes(8).toString('base64').slice(0, 12);
-        }
-        // パスワードの強度チェック（最低8文字）
-        if (generatedPassword.length < 8) {
-            return (0, response_1.errorResponse)('BAD_REQUEST', 'Password must be at least 8 characters', 400);
-        }
-        // パスワードのハッシュ化
-        const hashedPassword = crypto.createHash('sha256').update(generatedPassword).digest('hex');
-        if (existingUsers.length > 0) {
-            // 既存ユーザーの場合、role_flagを2（スタッフ）に更新
-            if (existingUsers[0].role_flag !== 2) {
-                await db.execute(`UPDATE users SET role_flag = 2, password = ?, name_kanji = COALESCE(?, name_kanji), name_kana = COALESCE(?, name_kana), tel = COALESCE(?, tel), org_id = COALESCE(?, org_id), remarks = COALESCE(?, remarks) WHERE email = ?`, [hashedPassword, name_kanji || null, name_kana || null, tel || null, org_id || null, remarks || null, email]);
+        const placeholderHash = randomPlaceholderPasswordHash();
+        const pool = (0, connection_1.getDB)();
+        await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [existingUsers] = (await conn.execute('SELECT email, role_flag FROM users WHERE email = ?', [email]));
+            if (existingUsers.length > 0) {
+                if (existingUsers[0].role_flag !== 2) {
+                    await conn.execute(`UPDATE users SET role_flag = 2, password = ?, name_kanji = COALESCE(?, name_kanji), name_kana = COALESCE(?, name_kana), tel = COALESCE(?, tel), org_id = COALESCE(?, org_id), remarks = COALESCE(?, remarks) WHERE email = ?`, [placeholderHash, name_kanji || null, name_kana || null, tel || null, org_id || null, remarks || null, email]);
+                }
             }
-        }
-        else {
-            // 新規ユーザーの場合、スタッフとして登録
-            await db.execute(`INSERT INTO users (email, password, name_kanji, name_kana, tel, org_id, role_flag, remarks)
-         VALUES (?, ?, ?, ?, ?, ?, 2, ?)`, [email, hashedPassword, name_kanji || '', name_kana || '', tel || '', org_id || null, remarks || null]);
-        }
-        // Cognitoにユーザーを作成または更新
+            else {
+                await conn.execute(`INSERT INTO users (email, password, name_kanji, name_kana, tel, org_id, role_flag, remarks)
+         VALUES (?, ?, ?, ?, ?, ?, 2, ?)`, [email, placeholderHash, name_kanji || '', name_kana || '', tel || '', org_id || null, remarks || null]);
+            }
+        });
         let invitationSent = false;
+        let cognitoMessage = '';
         try {
             if (userPoolId) {
                 try {
-                    // Cognitoユーザーを作成
                     await cognitoClient.send(new client_cognito_identity_provider_1.AdminCreateUserCommand({
                         UserPoolId: userPoolId,
                         Username: email,
                         UserAttributes: [
                             { Name: 'email', Value: email },
                             { Name: 'email_verified', Value: 'true' },
+                            { Name: 'name', Value: (name_kanji || '').trim() || email },
                         ],
-                        MessageAction: 'SUPPRESS', // メール送信を抑制
-                        TemporaryPassword: generatedPassword,
-                    }));
-                    // パスワードを設定
-                    await cognitoClient.send(new client_cognito_identity_provider_1.AdminSetUserPasswordCommand({
-                        UserPoolId: userPoolId,
-                        Username: email,
-                        Password: generatedPassword,
-                        Permanent: true,
+                        // TemporaryPassword 省略 → Cognito が生成し、招待メールで通知（MessageAction 既定）
                     }));
                     invitationSent = true;
+                    cognitoMessage = '招待メールを送信しました（仮パスワード）';
                 }
                 catch (cognitoError) {
                     if (cognitoError.name === 'UsernameExistsException') {
-                        // 既存ユーザーの場合、パスワードを更新
-                        await cognitoClient.send(new client_cognito_identity_provider_1.AdminSetUserPasswordCommand({
+                        try {
+                            await cognitoClient.send(new client_cognito_identity_provider_1.AdminUpdateUserAttributesCommand({
+                                UserPoolId: userPoolId,
+                                Username: email,
+                                UserAttributes: [{ Name: 'name', Value: (name_kanji || '').trim() || email }],
+                            }));
+                        }
+                        catch (attrErr) {
+                            console.warn('AdminUpdateUserAttributes before password reset:', attrErr);
+                        }
+                        await cognitoClient.send(new client_cognito_identity_provider_1.AdminResetUserPasswordCommand({
                             UserPoolId: userPoolId,
                             Username: email,
-                            Password: generatedPassword,
-                            Permanent: true,
                         }));
                         invitationSent = true;
+                        cognitoMessage = '既存ユーザーにパスワード再設定メールを送信しました';
                     }
                     else {
                         throw cognitoError;
@@ -143,15 +134,17 @@ const handler = async (event) => {
         }
         catch (cognitoError) {
             console.error('Cognito user creation error:', cognitoError);
-            // Cognitoのエラーは無視して続行（データベースには登録済み）
+            cognitoMessage = cognitoError.message || 'Cognito error';
         }
         return (0, response_1.successResponse)({
             status: 'success',
             invitationSent,
             email,
             message: invitationSent
-                ? 'Staff invited successfully. Password has been set.'
-                : 'Staff registered in database. Cognito invitation failed.',
+                ? cognitoMessage || 'スタッフを登録し、メールを送信しました'
+                : userPoolId
+                    ? `DB に登録しましたが、Cognito 処理に失敗しました: ${cognitoMessage}`
+                    : 'スタッフを DB に登録しました（User Pool 未設定のためメールは送信されません）',
         });
     }
     catch (error) {

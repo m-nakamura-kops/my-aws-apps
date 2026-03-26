@@ -11,6 +11,7 @@ import ErrorAlert from '@/components/ui/ErrorAlert';
 import SuccessAlert from '@/components/ui/SuccessAlert';
 import LoadingButton from '@/components/ui/LoadingButton';
 import TableSkeleton from '@/components/ui/TableSkeleton';
+import EmergencyMobileBanner from '@/components/ui/EmergencyMobileBanner';
 
 interface Staff {
   email: string;
@@ -25,7 +26,7 @@ interface Staff {
 }
 
 function StaffsPageContent() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isAdmin } = useAuth();
   const router = useRouter();
   const [staffs, setStaffs] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,8 +34,10 @@ function StaffsPageContent() {
   const [success, setSuccess] = useState('');
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
+  const [demotingEmail, setDemotingEmail] = useState<string | null>(null);
   const [deletingEmail, setDeletingEmail] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -46,6 +49,15 @@ function StaffsPageContent() {
     if (isAuthenticated) {
       loadStaffs();
     }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    const t = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null;
+    if (!t) return;
+    try {
+      const payload = JSON.parse(atob(t));
+      if (payload.email) setCurrentUserEmail(payload.email);
+    } catch {}
   }, [isAuthenticated]);
 
   const loadStaffs = async () => {
@@ -65,8 +77,34 @@ function StaffsPageContent() {
     }
   };
 
-  const handleDelete = async (email: string) => {
-    if (!confirm('このスタッフを利用者に変更しますか？\n（アカウントは残り、打刻記録も保持されます）')) {
+  const handleDemoteToUser = async (email: string) => {
+    if (currentUserEmail && currentUserEmail.toLowerCase() === email.toLowerCase()) {
+      setError('自分自身の権限は変更できません');
+      return;
+    }
+    if (!confirm('スタッフ権限を解除し、利用者へ戻しますか？')) {
+      return;
+    }
+
+    try {
+      setDemotingEmail(email);
+      setError('');
+      await apiClient.updateStaff(email, { role_flag: 1 });
+      setSuccess('スタッフ権限を解除し、利用者に変更しました');
+      await loadStaffs();
+    } catch (err: any) {
+      setError(err.message || '利用者への変更に失敗しました');
+    } finally {
+      setDemotingEmail(null);
+    }
+  };
+
+  const handlePermanentDelete = async (email: string) => {
+    if (currentUserEmail && currentUserEmail.toLowerCase() === email.toLowerCase()) {
+      setError('自分自身のアカウントは削除できません');
+      return;
+    }
+    if (!confirm('アカウントを削除しますか？この操作は取り消せません')) {
       return;
     }
 
@@ -74,14 +112,16 @@ function StaffsPageContent() {
       setDeletingEmail(email);
       setError('');
       const result = await apiClient.deleteStaff(email);
-      if (result.attendance_records_count) {
-        setSuccess(`スタッフを利用者に変更しました（打刻記録: ${result.attendance_records_count}件）`);
-      } else {
-        setSuccess('スタッフを利用者に変更しました');
+      let msg = result.message || 'アカウントを削除しました';
+      if (result.cognito_error) {
+        msg += `（Cognito: ${result.cognito_error}）`;
+      } else if (result.cognito_deleted) {
+        msg += '（Cognito ユーザーも削除しました）';
       }
+      setSuccess(msg);
       await loadStaffs();
     } catch (err: any) {
-      setError(err.message || '利用者への変更に失敗しました');
+      setError(err.message || 'アカウントの削除に失敗しました');
     } finally {
       setDeletingEmail(null);
     }
@@ -113,15 +153,18 @@ function StaffsPageContent() {
 
   return (
     <main className="min-h-screen p-8 bg-gray-50">
+      <EmergencyMobileBanner />
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <div>
             <h1 className="text-4xl font-bold mb-2">スタッフ管理</h1>
-            <p className="text-lg text-gray-600">スタッフの登録・編集・削除ができます（招待メールは送りません）</p>
+            <p className="text-lg text-gray-600">
+              スタッフの登録・編集、「利用者へ変更」（権限解除）、「削除」（DB／Cognito からの物理削除）ができます。削除・権限変更は管理者のみ操作できます（招待メールは送りません）
+            </p>
           </div>
           <div className="flex gap-4">
             <Link
-              href="/"
+              href="/home"
               className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
             >
               ホームに戻る
@@ -185,79 +228,117 @@ function StaffsPageContent() {
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow overflow-hidden">
-            <div className="overflow-x-auto">
+            {/* PC: テーブル（≥768px） */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      メールアドレス
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      権限
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      氏名（漢字）
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      カナ
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      電話番号
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      組織ID
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      打刻記録数
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      操作
-                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">メールアドレス</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">権限</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">氏名（漢字）</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">カナ</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">電話番号</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">組織ID</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">打刻記録数</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {staffs.map((staff) => (
-                    <tr key={staff.email} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {staff.email}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {staff.role_flag === 3 ? '管理者' : 'スタッフ'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {staff.name_kanji}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {staff.name_kana}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {staff.tel}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {staff.org_id || '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {staff.total_attendance_records}件
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  {staffs.map((staff) => {
+                    const isSelf = currentUserEmail && currentUserEmail.toLowerCase() === staff.email.toLowerCase();
+                    return (
+                      <tr key={staff.email} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{staff.email}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{staff.role_flag === 3 ? '管理者' : 'スタッフ'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{staff.name_kanji}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{staff.name_kana}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{staff.tel}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{staff.org_id || '-'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{staff.total_attendance_records}件</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          {isSelf ? (
+                            <span className="text-gray-500 text-xs">自分自身の権限変更・削除はできません</span>
+                          ) : !isAdmin ? (
+                            <span className="text-gray-400 text-xs">管理者のみ操作できます</span>
+                          ) : (
+                            <span className="inline-flex flex-wrap items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingStaff(staff)}
+                                disabled={demotingEmail === staff.email || deletingEmail === staff.email}
+                                className="text-indigo-600 hover:text-indigo-900 min-h-[44px] px-1 disabled:opacity-50"
+                              >
+                                編集
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDemoteToUser(staff.email)}
+                                disabled={demotingEmail === staff.email || deletingEmail === staff.email}
+                                className="min-h-[44px] px-3 py-1 rounded border-2 border-amber-500 text-amber-800 bg-white hover:bg-amber-50 disabled:opacity-50"
+                              >
+                                {demotingEmail === staff.email ? '処理中...' : '利用者へ変更'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePermanentDelete(staff.email)}
+                                disabled={demotingEmail === staff.email || deletingEmail === staff.email}
+                                className="min-h-[44px] px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                              >
+                                {deletingEmail === staff.email ? '処理中...' : '削除'}
+                              </button>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {/* スマホ: カード（<768px） */}
+            <div className="md:hidden divide-y divide-gray-200">
+              {staffs.map((staff) => {
+                const isSelf = currentUserEmail && currentUserEmail.toLowerCase() === staff.email.toLowerCase();
+                return (
+                  <div key={staff.email} className="p-4 min-h-[44px]">
+                    <div className="font-medium text-gray-900">{staff.name_kanji} {staff.name_kana && <span className="text-gray-500 text-sm">({staff.name_kana})</span>}</div>
+                    <div className="text-sm text-gray-500">{staff.email}</div>
+                    <div className="text-sm text-gray-600 mt-1">権限: {staff.role_flag === 3 ? '管理者' : 'スタッフ'} · 打刻: {staff.total_attendance_records}件</div>
+                    {isSelf ? (
+                      <p className="text-xs text-gray-500 mt-2">自分自身の権限変更・削除はできません</p>
+                    ) : !isAdmin ? (
+                      <p className="text-xs text-gray-400 mt-2">管理者のみ操作できます</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2 mt-2">
                         <button
+                          type="button"
                           onClick={() => setEditingStaff(staff)}
-                          className="text-indigo-600 hover:text-indigo-900 mr-4"
+                          disabled={demotingEmail === staff.email || deletingEmail === staff.email}
+                          className="px-3 py-2 text-indigo-600 border border-indigo-600 rounded min-h-[44px] disabled:opacity-50"
                         >
                           編集
                         </button>
                         <button
-                          onClick={() => handleDelete(staff.email)}
-                          disabled={deletingEmail === staff.email}
-                          className="text-red-600 hover:text-red-900 disabled:opacity-50"
+                          type="button"
+                          onClick={() => handleDemoteToUser(staff.email)}
+                          disabled={demotingEmail === staff.email || deletingEmail === staff.email}
+                          className="px-3 py-2 rounded min-h-[44px] border-2 border-amber-500 text-amber-800 bg-white disabled:opacity-50"
                         >
-                          {deletingEmail === staff.email ? '処理中...' : '利用者に変更'}
+                          {demotingEmail === staff.email ? '処理中...' : '利用者へ変更'}
                         </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <button
+                          type="button"
+                          onClick={() => handlePermanentDelete(staff.email)}
+                          disabled={demotingEmail === staff.email || deletingEmail === staff.email}
+                          className="px-3 py-2 rounded min-h-[44px] bg-red-600 text-white disabled:opacity-50"
+                        >
+                          {deletingEmail === staff.email ? '処理中...' : '削除'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -279,6 +360,7 @@ function StaffsPageContent() {
       {editingStaff && (
         <StaffModal
           staff={editingStaff}
+          currentUserEmail={currentUserEmail}
           onClose={() => setEditingStaff(null)}
           onSuccess={() => {
             setEditingStaff(null);
@@ -292,16 +374,18 @@ function StaffsPageContent() {
 
 function StaffModal({
   staff,
+  currentUserEmail,
   onClose,
   onSuccess,
 }: {
   staff: Staff | null;
+  currentUserEmail?: string | null;
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const isSelf = staff && currentUserEmail && currentUserEmail.toLowerCase() === staff.email.toLowerCase();
   const [formData, setFormData] = useState({
     email: staff?.email || '',
-    password: '',
     name_kanji: staff?.name_kanji || '',
     name_kana: staff?.name_kana || '',
     tel: staff?.tel || '',
@@ -326,14 +410,12 @@ function StaffModal({
           tel: formData.tel,
           org_id: formData.org_id || undefined,
           remarks: formData.remarks || undefined,
-          password: formData.password || undefined,
           role_flag: formData.role_flag,
         });
       } else {
-        // 新規登録
+        // 新規: Cognito 招待メール（仮パスワード）。管理者はパスワードを設定しない。
         await apiClient.inviteStaff({
           email: formData.email,
-          password: formData.password || undefined,
           name_kanji: formData.name_kanji || undefined,
           name_kana: formData.name_kana || undefined,
           tel: formData.tel || undefined,
@@ -373,18 +455,9 @@ function StaffModal({
                   className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  パスワード（省略可、自動生成されます）
-                </label>
-                <input
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  minLength={8}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
+              <p className="text-sm text-gray-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                登録後、入力したメール宛に Cognito から招待メール（仮パスワード）が届きます。本人が初回ログイン時にパスワードを設定してください。
+              </p>
             </>
           )}
 
@@ -405,26 +478,18 @@ function StaffModal({
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   権限
                 </label>
-                <select
-                  value={formData.role_flag}
-                  onChange={(e) => setFormData({ ...formData, role_flag: Number(e.target.value) })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value={2}>スタッフ</option>
-                  <option value={3}>管理者</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  パスワード（変更する場合のみ）
-                </label>
-                <input
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  minLength={8}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                {isSelf ? (
+                  <p className="text-sm text-gray-500 py-2">自分自身の権限は変更できません</p>
+                ) : (
+                  <select
+                    value={formData.role_flag}
+                    onChange={(e) => setFormData({ ...formData, role_flag: Number(e.target.value) })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value={2}>スタッフ</option>
+                    <option value={3}>管理者</option>
+                  </select>
+                )}
               </div>
             </>
           )}

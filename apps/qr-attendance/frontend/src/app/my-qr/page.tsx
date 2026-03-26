@@ -1,5 +1,10 @@
 'use client';
 
+/**
+ * No.6.4.4 利用者：打刻用QR表示 (/my-qr)
+ * マイページ等から自分のQRコードを大きく表示。有効期限付きQR表示。
+ */
+
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
@@ -88,16 +93,16 @@ export default function MyQrPage() {
             <LoadingSpinner />
           </div>
         ) : qrData ? (
-          <div className="bg-white rounded-2xl shadow-lg p-6 flex flex-col items-center">
-            <div className="bg-white p-4 rounded-xl border-2 border-gray-200">
+          <div className="bg-white rounded-2xl shadow-lg p-8 flex flex-col items-center">
+            <div className="bg-white p-6 rounded-xl border-2 border-gray-200">
               <QRCodeSVG
                 value={qrValue}
-                size={260}
+                size={320}
                 level="M"
                 includeMargin
               />
             </div>
-            <p className="text-gray-500 text-xs mt-4">
+            <p className="text-gray-500 text-sm mt-4">
               有効期限: {new Date(qrData.expires_at).toLocaleTimeString('ja-JP')} 頃（約10分で自動更新）
             </p>
           </div>
@@ -105,7 +110,7 @@ export default function MyQrPage() {
 
         <div className="mt-8 text-center">
           <Link
-            href="/"
+            href="/home"
             className="text-indigo-600 hover:text-indigo-800 font-medium"
           >
             ← ホームに戻る

@@ -11,6 +11,10 @@ const secrets_1 = require('./shared/db/secrets');
 const response_1 = require('./shared/utils/response');
 const auth_1 = require('./shared/utils/auth');
 const BOM = '\uFEFF';
+/** ファイル名に使えない文字をアンダースコアに置換（イベント名用） */
+function sanitizeFilename(name) {
+    return String(name).replace(/[/\\:*?"<>|]/g, '_').trim() || 'イベント';
+}
 /** RFC 4180: カンマ・改行・ダブルクォートを含む場合は囲み、内部の " は "" にエスケープ */
 function escapeCsvField(value) {
     if (value === null || value === undefined)
@@ -34,6 +38,12 @@ function formatDateTime(value) {
     const min = String(d.getMinutes()).padStart(2, '0');
     const sec = String(d.getSeconds()).padStart(2, '0');
     return `${y}-${m}-${day} ${h}:${min}:${sec}`;
+}
+/** 出席率を小数点第1位まで表示。申込0の場合は 0% を返す（0除算ガード） */
+function formatAttendanceRate(totalRegistrations, totalAttendees) {
+    if (totalRegistrations === 0)
+        return '0.0';
+    return ((totalAttendees / totalRegistrations) * 100).toFixed(1);
 }
 const handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') {
@@ -74,6 +84,10 @@ LEFT JOIN (
 ) al ON al.event_id = r.event_id AND al.email = r.email
 WHERE r.event_id = ?
 ORDER BY r.created_at ASC`, [eventId]);
+        const totalRegistrations = (rows || []).length;
+        const totalAttendees = (rows || []).filter((r) => r.attendance_time != null).length;
+        const noShowCount = totalRegistrations - totalAttendees;
+        const attendanceRateStr = formatAttendanceRate(totalRegistrations, totalAttendees);
         const headerRow = 'イベントID,開催日,イベント名,利用者名,ふりがな,メールアドレス,区分（生徒/一般）,申込日時,打刻日時（実績）';
         const dataRows = (rows || []).map((r) => [
             r.event_id,
@@ -86,16 +100,15 @@ ORDER BY r.created_at ASC`, [eventId]);
             formatDateTime(r.registration_date),
             r.attendance_time ? formatDateTime(r.attendance_time) : '',
         ].join(','));
-        const csvContent = [headerRow, ...dataRows].join('\n');
+        const summaryHeader = '申込数,出席数,欠席数,出席率（%）';
+        const summaryRow = [totalRegistrations, totalAttendees, noShowCount, attendanceRateStr].join(',');
+        const csvContent = [headerRow, ...dataRows, '', summaryHeader, summaryRow].join('\n');
         const body = BOM + csvContent;
-        const eventDate = events[0].event_date;
-        const d = typeof eventDate === 'string'
-            ? new Date(eventDate)
-            : eventDate;
-        const dateStr = isNaN(d.getTime())
-            ? 'unknown'
-            : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        const filename = `event_attendees_${eventId}_${dateStr}.csv`;
+        const eventName = events[0].event_name || '';
+        const now = new Date();
+        const outputDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const safeEventName = sanitizeFilename(eventName);
+        const filename = `出席レポート_${safeEventName}_${outputDateStr}.csv`;
         return {
             statusCode: 200,
             headers: {

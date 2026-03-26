@@ -1,78 +1,132 @@
 /**
- * スタッフ削除Lambda関数（利用者に変更）
+ * スタッフアカウント物理削除
  * DELETE /v1/admin/staffs/{email}
- * スタッフ/管理者を「利用者」に変更するのみ。アカウントは削除しない。
+ * DB の users 行を削除（関連は CASCADE / 事前に staff_email 参照を除去）。可能なら Cognito ユーザーも削除。
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import {
+  CognitoIdentityProviderClient,
+  AdminDeleteUserCommand,
+} from '@aws-sdk/client-cognito-identity-provider';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
+import { parseEmailPathParamForDb } from '../../../../shared/utils/parse-path-email';
+
+const cognitoClient = new CognitoIdentityProviderClient({
+  region: process.env.AWS_REGION || 'ap-northeast-1',
+});
+const userPoolId = process.env.USER_POOL_ID || '';
 
 export const handler = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  // CORSプリフライトリクエスト対応
   if (event.httpMethod === 'OPTIONS') {
     return corsResponse();
   }
 
   try {
-    // 管理者権限チェック
     await initDBFromSecrets();
     const permissionCheck = await checkAdminPermission(event);
     if (!permissionCheck.authorized) {
       return errorResponse('FORBIDDEN', permissionCheck.error || 'Admin access required', 403);
     }
 
-    // パスパラメータからemailを取得（URLデコード）
     const rawEmail = event.pathParameters?.email;
-    const email = rawEmail ? decodeURIComponent(rawEmail) : null;
-    if (!email) {
-      return errorResponse('BAD_REQUEST', 'email is required', 400);
+    const parsed = parseEmailPathParamForDb(rawEmail);
+    if (!parsed.ok) {
+      console.log(
+        JSON.stringify({
+          msg: '[admin/staffs/delete] parse failed',
+          requestId: event.requestContext?.requestId,
+          rawPathParamEmail: rawEmail ?? null,
+          reason: parsed.reason,
+        })
+      );
+      return errorResponse(
+        'BAD_REQUEST',
+        parsed.reason === 'decodeURIComponent_error'
+          ? 'Invalid email encoding in path'
+          : 'email is required',
+        400
+      );
+    }
+    const email = parsed.email;
+    console.log(
+      JSON.stringify({
+        msg: '[admin/staffs/delete] before_sql',
+        requestId: event.requestContext?.requestId,
+        path: event.path,
+        rawPathParamEmail: rawEmail ?? null,
+        emailForSql: email,
+        emailUtf8Hex: Buffer.from(email, 'utf8').toString('hex'),
+      })
+    );
+    if (permissionCheck.email && permissionCheck.email.toLowerCase() === email.toLowerCase()) {
+      return errorResponse('FORBIDDEN', '自分自身のアカウントは削除できません', 403);
     }
 
-    // データベース接続を取得
-    const db = getDB();
+    const pool = getDB();
+    const outcome = await withConnection(pool, async (conn) => {
+      const [existingUsers] = (await conn.execute(
+        'SELECT email, role_flag FROM users WHERE email = ?',
+        [email]
+      )) as any[];
 
-    // ユーザーの存在確認（role_flag = 2 スタッフ または 3 管理者）
-    const [existingUsers] = await db.execute(
-      'SELECT email, role_flag FROM users WHERE email = ?',
-      [email]
-    ) as any[];
+      if (existingUsers.length === 0) {
+        return { err: 'not_found' as const };
+      }
 
-    if (existingUsers.length === 0) {
+      const role = existingUsers[0].role_flag;
+      if (role !== 2 && role !== 3) {
+        return { err: 'not_staff' as const };
+      }
+
+      // staff_email は ON DELETE RESTRICT のため先に除去
+      await conn.execute('DELETE FROM attendance_logs WHERE staff_email = ?', [email]);
+      await conn.execute('DELETE FROM users WHERE email = ?', [email]);
+
+      return { err: null as const };
+    });
+
+    if (outcome.err === 'not_found') {
       return errorResponse('NOT_FOUND', 'Staff not found', 404);
     }
-
-    const role = existingUsers[0].role_flag;
-    if (role !== 2 && role !== 3) {
+    if (outcome.err === 'not_staff') {
       return errorResponse('BAD_REQUEST', 'User is not a staff or admin', 400);
     }
 
-    // スタッフを辞めさせても利用者としてアカウントは残す（role_flag を 1 に変更）
-    await db.execute('UPDATE users SET role_flag = 1 WHERE email = ?', [email]);
-
-    const [attendanceLogs] = await db.execute(
-      'SELECT COUNT(*) as count FROM attendance_logs WHERE staff_email = ?',
-      [email]
-    ) as any[];
-    const logCount = attendanceLogs[0]?.count || 0;
+    let cognito_deleted = false;
+    let cognito_error: string | undefined;
+    if (userPoolId) {
+      try {
+        await cognitoClient.send(
+          new AdminDeleteUserCommand({
+            UserPoolId: userPoolId,
+            Username: email,
+          })
+        );
+        cognito_deleted = true;
+      } catch (e: any) {
+        if (e.name === 'UserNotFoundException') {
+          cognito_deleted = false;
+        } else {
+          cognito_error = e.message || String(e);
+          console.error('Cognito AdminDeleteUser error:', e);
+        }
+      }
+    }
 
     return successResponse({
-      message: 'スタッフを利用者に変更しました',
-      email: email,
-      attendance_records_count: logCount,
+      message: 'アカウントを削除しました',
+      email,
+      cognito_deleted,
+      ...(cognito_error ? { cognito_error } : {}),
     });
   } catch (error: any) {
     console.error('Delete staff error:', error);
-
-    return errorResponse(
-      'INTERNAL_ERROR',
-      'An internal error occurred',
-      500,
-      error.message
-    );
+    return errorResponse('INTERNAL_ERROR', 'An internal error occurred', 500, error.message);
   }
 };

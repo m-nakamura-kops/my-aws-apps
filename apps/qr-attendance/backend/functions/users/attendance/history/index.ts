@@ -5,10 +5,10 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from './shared/db/connection';
-import { initDBFromSecrets } from './shared/db/secrets';
-import { successResponse, errorResponse, corsResponse } from './shared/utils/response';
-import { getUserEmailFromRequest } from './shared/utils/auth';
+import { getDB, withConnection } from '../../../../shared/db/connection';
+import { initDBFromSecrets } from '../../../../shared/db/secrets';
+import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
+import { getUserEmailFromRequest } from '../../../../shared/utils/auth';
 
 export const handler = async (
   event: APIGatewayProxyEvent
@@ -29,7 +29,7 @@ export const handler = async (
     if (isNaN(offset) || offset < 0) offset = 0;
 
     await initDBFromSecrets();
-    const db = getDB();
+    const pool = getDB();
 
     const requestEmail = getUserEmailFromRequest(event);
     if (!requestEmail) {
@@ -80,10 +80,12 @@ export const handler = async (
       INNER JOIN users staff ON al.staff_email = staff.email
       ${whereClause}
       ORDER BY al.in_time DESC LIMIT ${limitInt} OFFSET ${offsetInt}`;
-    const [logs] = await db.execute(query, params) as any[];
-
-    const countQuery = `SELECT COUNT(*) as total FROM attendance_logs al ${whereClause}`;
-    const [countResult] = await db.execute(countQuery, params) as any[];
+    const [logs, countResult] = await withConnection(pool, async (conn) => {
+      const [l] = (await conn.execute(query, params)) as any[];
+      const countQuery = `SELECT COUNT(*) as total FROM attendance_logs al ${whereClause}`;
+      const [c] = (await conn.execute(countQuery, params)) as any[];
+      return [l, c] as const;
+    });
     const total = countResult[0]?.total || 0;
 
     return successResponse({

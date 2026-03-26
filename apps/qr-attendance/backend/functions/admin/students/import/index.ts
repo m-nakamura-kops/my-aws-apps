@@ -4,7 +4,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
@@ -41,8 +41,9 @@ export const handler = async (
     const errors: { row: number; email?: string; message: string }[] = [];
     let imported = 0;
     let hadValidFormatRow = false;
-    const db = getDB();
+    const pool = getDB();
 
+    await withConnection(pool, async (conn) => {
     for (let i = 0; i < lines.length; i++) {
       const rowNum = i + 1;
       const cells = parseCSVLine(lines[i]);
@@ -79,14 +80,14 @@ export const handler = async (
 
       hadValidFormatRow = true;
       try {
-        const [existing] = await db.execute('SELECT email FROM users WHERE email = ?', [email]) as any[];
+        const [existing] = (await conn.execute('SELECT email FROM users WHERE email = ?', [email])) as any[];
         if (existing.length > 0) {
           errors.push({ row: rowNum, email, message: '既に登録されているメールアドレスです' });
           continue;
         }
 
         const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
-        await db.execute(
+        await conn.execute(
           `INSERT INTO users (email, password, name_kanji, name_kana, tel, org_id, role_flag, remarks)
            VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
           [email, hashedPassword, name_kanji, name_kana, tel, org_id, remarks]
@@ -100,6 +101,7 @@ export const handler = async (
         }
       }
     }
+    });
 
     // 形式不正のときだけ 400（形式上有効な行が1件もない場合）
     if (imported === 0 && errors.length > 0 && !hadValidFormatRow) {

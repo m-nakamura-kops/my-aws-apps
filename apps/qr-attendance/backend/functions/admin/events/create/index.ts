@@ -4,7 +4,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
@@ -49,35 +49,23 @@ export const handler = async (
     // MySQL DATETIME形式に変換（ISO 8601 のままではエラーになるため）
     const eventDateForDb = eventDate.toISOString().slice(0, 19).replace('T', ' ');
 
-    // データベース接続を取得（既に初期化済み）
-    await initDBFromSecrets();
-    const db = getDB();
+    const pool = getDB();
 
-    // イベント作成
-    const [result] = await db.execute(
-      `INSERT INTO events (event_name, event_date, location, capacity, summary)
+    const { eventId, eventRow } = await withConnection(pool, async (conn) => {
+      const [result] = (await conn.execute(
+        `INSERT INTO events (event_name, event_date, location, capacity, summary)
        VALUES (?, ?, ?, ?, ?)`,
-      [
-        event_name,
-        eventDateForDb,
-        location || null,
-        capacity || null,
-        summary || null,
-      ]
-    ) as any[];
-
-    const eventId = result.insertId;
-
-    // 作成されたイベントを取得
-    const [events] = await db.execute(
-      'SELECT * FROM events WHERE event_id = ?',
-      [eventId]
-    ) as any[];
+        [event_name, eventDateForDb, location || null, capacity || null, summary || null]
+      )) as any[];
+      const id = result.insertId;
+      const [events] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [id])) as any[];
+      return { eventId: id, eventRow: events[0] };
+    });
 
     return successResponse(
       {
         eventId: eventId,
-        event: events[0],
+        event: eventRow,
       },
       201
     );

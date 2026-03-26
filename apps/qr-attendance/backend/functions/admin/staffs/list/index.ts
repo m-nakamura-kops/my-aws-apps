@@ -4,7 +4,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
@@ -39,8 +39,7 @@ export const handler = async (
       offset = 0;
     }
 
-    // データベース接続を取得
-    const db = getDB();
+    const pool = getDB();
 
     // スタッフ一覧取得（role_flag = 2 スタッフ, 3 管理者）
     let query = `
@@ -76,23 +75,23 @@ export const handler = async (
 
     query += ` GROUP BY u.email ORDER BY u.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
 
-    const [staffs] = await db.execute(query, params) as any[];
-
-    // 総件数を取得
-    let countQuery = `
+    const [staffs, countResult] = await withConnection(pool, async (conn) => {
+      const [st] = (await conn.execute(query, params)) as any[];
+      let countQuery = `
       SELECT COUNT(DISTINCT u.email) as total
       FROM users u
       WHERE u.role_flag IN (2, 3)
     `;
-    if (search) {
-      countQuery += ` AND (
+      if (search) {
+        countQuery += ` AND (
         u.name_kanji LIKE ? OR 
         u.name_kana LIKE ? OR 
         u.email LIKE ?
       )`;
-    }
-
-    const [countResult] = await db.execute(countQuery, countParams) as any[];
+      }
+      const [cnt] = (await conn.execute(countQuery, countParams)) as any[];
+      return [st, cnt] as const;
+    });
     const total = countResult[0]?.total || 0;
 
     // レスポンスデータの整形

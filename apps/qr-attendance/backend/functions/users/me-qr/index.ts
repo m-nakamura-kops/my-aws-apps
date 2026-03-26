@@ -7,7 +7,7 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { getUserEmailFromRequest } from '../../../shared/utils/auth';
 import { initDBFromSecrets } from '../../../shared/db/secrets';
-import { getDB } from '../../../shared/db/connection';
+import { getDB, withConnection } from '../../../shared/db/connection';
 import { successResponse, errorResponse, corsResponse } from '../../../shared/utils/response';
 import * as crypto from 'crypto';
 
@@ -27,11 +27,10 @@ export const handler = async (
     }
 
     await initDBFromSecrets();
-    const db = getDB();
-    const [users] = await db.execute(
-      'SELECT email FROM users WHERE email = ?',
-      [email]
-    ) as any[];
+    const pool = getDB();
+    const [users] = (await withConnection(pool, async (conn) =>
+      conn.execute('SELECT email FROM users WHERE email = ?', [email])
+    )) as any[];
 
     if (users.length === 0) {
       return errorResponse('NOT_FOUND', 'User not found', 404);

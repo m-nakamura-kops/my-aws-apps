@@ -1,2 +1,4 @@
 node_modules/
 package-lock.json
+# Copied from apps/qr-attendance/database/schema.sql by npm run sync-schema
+schema.sql

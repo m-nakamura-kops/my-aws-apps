@@ -92,7 +92,7 @@ function EventsPageContent() {
           </div>
           <div className="flex gap-4">
             <Link
-              href="/"
+              href="/home"
               className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
             >
               ホームに戻る

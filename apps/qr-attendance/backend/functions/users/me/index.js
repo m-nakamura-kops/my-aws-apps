@@ -6,10 +6,10 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
-const connection_1 = require("../../../shared/db/connection");
-const secrets_1 = require("../../../shared/db/secrets");
-const response_1 = require("../../../shared/utils/response");
-const auth_1 = require("../../../shared/utils/auth");
+const connection_1 = require("./shared/db/connection");
+const secrets_1 = require("./shared/db/secrets");
+const response_1 = require("./shared/utils/response");
+const auth_1 = require("./shared/utils/auth");
 const handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') {
         return (0, response_1.corsResponse)();

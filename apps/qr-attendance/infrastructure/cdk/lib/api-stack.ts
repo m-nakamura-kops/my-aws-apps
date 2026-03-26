@@ -54,6 +54,9 @@ export class QrAttendanceApiStack extends cdk.Stack {
           'cognito-idp:SignUp',
           'cognito-idp:AdminConfirmSignUp',
           'cognito-idp:AdminGetUser',
+          'cognito-idp:AdminDeleteUser',
+          'cognito-idp:AdminCreateUser',
+          'cognito-idp:AdminResetUserPassword',
         ],
         resources: [props.userPool.userPoolArn],
       })
@@ -95,14 +98,61 @@ export class QrAttendanceApiStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
     });
 
+    // CORS: ブラウザから localhost:3000（Next.js）を明示許可。本番フロントのオリジンは CDK コンテキスト cors:extraOrigins 等で追加可能。
+    const corsExtraOrigins =
+      (this.node.tryGetContext('corsExtraOrigins') as string[] | undefined) ?? [];
+    const corsAllowOrigins = [
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      ...corsExtraOrigins,
+    ];
+    // OPTIONS, GET, POST, PUT, DELETE を含む（Cors.ALL_METHODS でヘッダーと整合）
+    const corsAllowMethods = apigateway.Cors.ALL_METHODS;
+    const corsAllowHeaders = [
+      'Content-Type',
+      'Authorization',
+      'X-Amz-Date',
+      'X-Api-Key',
+      'X-Amz-Security-Token',
+    ];
+
     // API Gateway作成
     this.api = new apigateway.RestApi(this, 'Api', {
       restApiName: 'qr-attendance-api',
       description: 'QRコード打刻システム API',
       defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ['Content-Type', 'Authorization'],
+        allowOrigins: corsAllowOrigins,
+        allowMethods: corsAllowMethods,
+        allowHeaders: corsAllowHeaders,
+      },
+    });
+
+    // Lambda 未到達の 4xx/5xx（スロットル・認可エラー等）でもブラウザが CORS エラーにならないようゲートウェイ応答にヘッダーを付与
+    const gwCorsOrigin = "'http://localhost:3000'";
+    const gwCorsHeaders = "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'";
+    const gwCorsMethods = "'GET,POST,PUT,DELETE,OPTIONS'";
+    this.api.addGatewayResponse('Default4xxCors', {
+      type: apigateway.ResponseType.DEFAULT_4XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': gwCorsOrigin,
+        'Access-Control-Allow-Headers': gwCorsHeaders,
+        'Access-Control-Allow-Methods': gwCorsMethods,
+      },
+    });
+    this.api.addGatewayResponse('Default5xxCors', {
+      type: apigateway.ResponseType.DEFAULT_5XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': gwCorsOrigin,
+        'Access-Control-Allow-Headers': gwCorsHeaders,
+        'Access-Control-Allow-Methods': gwCorsMethods,
+      },
+    });
+    this.api.addGatewayResponse('IntegrationFailureCors', {
+      type: apigateway.ResponseType.INTEGRATION_FAILURE,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': gwCorsOrigin,
+        'Access-Control-Allow-Headers': gwCorsHeaders,
+        'Access-Control-Allow-Methods': gwCorsMethods,
       },
     });
 
@@ -123,10 +173,75 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
         // AWS_REGIONはLambdaランタイムによって自動的に設定されるため、手動設定不要
       },
       timeout: cdk.Duration.minutes(5), // マイグレーションには時間がかかる可能性があるため
     });
+
+    // マイグレーション006（entry/exit）— API 公開なし。aws lambda invoke のみで実行（VPC 内から RDS へ接続）
+    const migrate006Lambda = new lambda.Function(this, 'Migrate006Lambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda-functions/migrate-006')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: {
+        DB_SECRET_ARN: props.rdsSecret.secretArn,
+        DB_NAME: 'qr_attendance',
+        DB_HOST: props.dbEndpoint,
+        DB_PORT: '3306',
+        DB_SSL: 'true',
+      },
+      timeout: cdk.Duration.minutes(5),
+    });
+
+    // 結合テストユーザー投入（ローカルからプライベート RDS に届かない場合用・invoke のみ）
+    const seedTestUsersLambda = new lambda.Function(this, 'SeedTestUsersLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda-functions/seed-test-users')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: {
+        DB_SECRET_ARN: props.rdsSecret.secretArn,
+        DB_NAME: 'qr_attendance',
+        DB_HOST: props.dbEndpoint,
+        DB_PORT: '3306',
+        DB_SSL: 'true',
+      },
+      timeout: cdk.Duration.minutes(2),
+    });
+
+    // 本番開始前 DB クリーンアップ（invoke のみ・破壊的操作のため運用で厳重に扱う）
+    const dbProdCleanupLambda = new lambda.Function(this, 'DbProdCleanupLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda-functions/db-prod-cleanup')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: {
+        DB_SECRET_ARN: props.rdsSecret.secretArn,
+        DB_NAME: 'qr_attendance',
+        DB_HOST: props.dbEndpoint,
+        DB_PORT: '3306',
+        DB_SSL: 'true',
+      },
+      timeout: cdk.Duration.minutes(2),
+    });
+    dbProdCleanupLambda.node.addMetadata('purpose', 'Invoke-only destructive DB cleanup; remove from stack after use if desired');
 
     // ログインLambda関数
     const loginLambda = new lambda.Function(this, 'LoginLambda', {
@@ -145,6 +260,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
         USER_POOL_ID: props.userPool.userPoolId,
         COGNITO_CLIENT_ID: props.userPoolClient.userPoolClientId,
         // AWS_REGIONはLambdaランタイムによって自動的に設定される
@@ -169,6 +285,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
         USER_POOL_ID: props.userPool.userPoolId,
         COGNITO_CLIENT_ID: props.userPoolClient.userPoolClientId,
         AUTO_CONFIRM: 'true', // 開発環境では自動確認
@@ -214,6 +331,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -234,6 +352,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -254,6 +373,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -274,6 +394,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -295,6 +416,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
         QR_SECRET_KEY: 'change-this-secret-key-in-production', // 本番環境ではSecrets Managerから取得
         API_ID: this.api.restApiId, // API GatewayのIDを設定（循環依存を避けるため）
       },
@@ -318,6 +440,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
         USER_POOL_ID: props.userPool.userPoolId,
         QR_SECRET_KEY: 'change-this-secret-key-in-production', // 本番環境ではSecrets Managerから取得
       },
@@ -341,6 +464,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -362,6 +486,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -383,6 +508,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -404,6 +530,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -425,6 +552,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -446,6 +574,7 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
       },
       timeout: cdk.Duration.seconds(30),
     });
@@ -467,10 +596,301 @@ export class QrAttendanceApiStack extends cdk.Stack {
         DB_HOST: props.dbEndpoint,
         DB_PORT: '3306',
         DB_SSL: 'true',
+        CONNECTION_LIMIT: '2',
         USER_POOL_ID: props.userPool.userPoolId,
       },
       timeout: cdk.Duration.seconds(60),
     });
+
+    const lambdaDbEnv = {
+      DB_SECRET_ARN: props.rdsSecret.secretArn,
+      DB_NAME: 'qr_attendance',
+      DB_HOST: props.dbEndpoint,
+      DB_PORT: '3306',
+      DB_SSL: 'true',
+      CONNECTION_LIMIT: '2',
+      USER_POOL_ID: props.userPool.userPoolId,
+      COGNITO_CLIENT_ID: props.userPoolClient.userPoolClientId,
+    };
+
+    const newsListLambda = new lambda.Function(this, 'NewsListLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/news/list')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const eventsListForStaffLambda = new lambda.Function(this, 'EventsListForStaffLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/events/list')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const attendanceManualLambda = new lambda.Function(this, 'AttendanceManualLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/attendance/manual')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const studentsSearchLambda = new lambda.Function(this, 'StudentsSearchLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/students/search')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const userMeLambda = new lambda.Function(this, 'UserMeLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/users/me')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const userMeQrLambda = new lambda.Function(this, 'UserMeQrLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/users/me-qr')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: {
+        ...lambdaDbEnv,
+        QR_SECRET_KEY: 'change-this-secret-key-in-production',
+      },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const userScheduleLambda = new lambda.Function(this, 'UserScheduleLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/users/schedule')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminRegistrationsListLambda = new lambda.Function(this, 'AdminRegistrationsListLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/registrations/list')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminStudentsListLambda = new lambda.Function(this, 'AdminStudentsListLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/students/list')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminStudentsCreateLambda = new lambda.Function(this, 'AdminStudentsCreateLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/students/create')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminStudentsUpdateLambda = new lambda.Function(this, 'AdminStudentsUpdateLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/students/update')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminStudentsDeleteLambda = new lambda.Function(this, 'AdminStudentsDeleteLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/students/delete')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminStaffsListLambda = new lambda.Function(this, 'AdminStaffsListLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/staffs/list')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminStaffsInviteLambda = new lambda.Function(this, 'AdminStaffsInviteLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/staffs/invite')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminStaffsUpdateLambda = new lambda.Function(this, 'AdminStaffsUpdateLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/staffs/update')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminStaffsDeleteLambda = new lambda.Function(this, 'AdminStaffsDeleteLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/staffs/delete')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminNewsListLambda = new lambda.Function(this, 'AdminNewsListLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/news/list')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminNewsCreateLambda = new lambda.Function(this, 'AdminNewsCreateLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/news/create')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminNewsUpdateLambda = new lambda.Function(this, 'AdminNewsUpdateLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/news/update')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminNewsDeleteLambda = new lambda.Function(this, 'AdminNewsDeleteLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/news/delete')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(30),
+    });
+
+    const adminReportsEventCsvLambda = new lambda.Function(this, 'AdminReportsEventCsvLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../../backend/functions/admin/reports/events/csv')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: { ...lambdaDbEnv },
+      timeout: cdk.Duration.seconds(60),
+    });
+
+    // GET /v1/users/me, GET /v1/users/me/qr, GET /v1/users/schedule
+    const userMeResource = usersResource.addResource('me');
+    userMeResource.addMethod('GET', new apigateway.LambdaIntegration(userMeLambda));
+    const userMeQrResource = userMeResource.addResource('qr');
+    userMeQrResource.addMethod('GET', new apigateway.LambdaIntegration(userMeQrLambda));
+    const userScheduleResource = usersResource.addResource('schedule');
+    userScheduleResource.addMethod('GET', new apigateway.LambdaIntegration(userScheduleLambda));
+
+    // GET /v1/news（お知らせ一覧）
+    const newsResource = v1Resource.addResource('news');
+    newsResource.addMethod('GET', new apigateway.LambdaIntegration(newsListLambda));
+
+    // GET /v1/events（スタッフ・管理者向けイベント一覧）
+    const eventsListResource = v1Resource.addResource('events');
+    eventsListResource.addMethod('GET', new apigateway.LambdaIntegration(eventsListForStaffLambda));
+
+    // POST /v1/attendance/manual（手動打刻）
+    const attendanceManualResource = v1Resource.addResource('attendance').addResource('manual');
+    attendanceManualResource.addMethod('POST', new apigateway.LambdaIntegration(attendanceManualLambda));
+
+    // GET /v1/students/search?q=
+    const studentsSearchResource = v1Resource.addResource('students').addResource('search');
+    studentsSearchResource.addMethod('GET', new apigateway.LambdaIntegration(studentsSearchLambda));
 
     // イベント管理エンドポイント
     const adminResource = v1Resource.addResource('admin');
@@ -501,8 +921,42 @@ export class QrAttendanceApiStack extends cdk.Stack {
     const attendanceReportResource = eventIdResource.addResource('attendance-report');
     attendanceReportResource.addMethod('GET', new apigateway.LambdaIntegration(eventAttendanceReportLambda));
 
-    // 生徒管理エンドポイント（CSV一括登録）
+    // お知らせ管理（管理者）
+    const adminNewsResource = adminResource.addResource('news');
+    adminNewsResource.addMethod('GET', new apigateway.LambdaIntegration(adminNewsListLambda));
+    adminNewsResource.addMethod('POST', new apigateway.LambdaIntegration(adminNewsCreateLambda));
+    const adminNewsIdResource = adminNewsResource.addResource('{id}');
+    adminNewsIdResource.addMethod('PUT', new apigateway.LambdaIntegration(adminNewsUpdateLambda));
+    adminNewsIdResource.addMethod('DELETE', new apigateway.LambdaIntegration(adminNewsDeleteLambda));
+
+    // GET /v1/admin/registrations
+    const adminRegistrationsResource = adminResource.addResource('registrations');
+    adminRegistrationsResource.addMethod('GET', new apigateway.LambdaIntegration(adminRegistrationsListLambda));
+
+    // スタッフ管理・招待
+    const adminStaffsResource = adminResource.addResource('staffs');
+    adminStaffsResource.addMethod('GET', new apigateway.LambdaIntegration(adminStaffsListLambda));
+    const adminStaffEmailResource = adminStaffsResource.addResource('{email}');
+    adminStaffEmailResource.addMethod('PUT', new apigateway.LambdaIntegration(adminStaffsUpdateLambda));
+    adminStaffEmailResource.addMethod('DELETE', new apigateway.LambdaIntegration(adminStaffsDeleteLambda));
+    const adminInviteResource = adminResource.addResource('invite');
+    adminInviteResource.addMethod('POST', new apigateway.LambdaIntegration(adminStaffsInviteLambda));
+
+    // GET /v1/admin/reports/events/{eventId}/csv
+    const adminReportsCsvResource = adminResource
+      .addResource('reports')
+      .addResource('events')
+      .addResource('{eventId}')
+      .addResource('csv');
+    adminReportsCsvResource.addMethod('GET', new apigateway.LambdaIntegration(adminReportsEventCsvLambda));
+
+    // 生徒管理エンドポイント（一覧・作成・更新・削除・CSV一括登録）
     const studentsResource = adminResource.addResource('students');
+    studentsResource.addMethod('GET', new apigateway.LambdaIntegration(adminStudentsListLambda));
+    studentsResource.addMethod('POST', new apigateway.LambdaIntegration(adminStudentsCreateLambda));
+    const adminStudentEmailResource = studentsResource.addResource('{email}');
+    adminStudentEmailResource.addMethod('PUT', new apigateway.LambdaIntegration(adminStudentsUpdateLambda));
+    adminStudentEmailResource.addMethod('DELETE', new apigateway.LambdaIntegration(adminStudentsDeleteLambda));
     const studentsImportResource = studentsResource.addResource('import');
     studentsImportResource.addMethod('POST', new apigateway.LambdaIntegration(importStudentsLambda));
 
@@ -553,6 +1007,30 @@ export class QrAttendanceApiStack extends cdk.Stack {
       value: this.api.restApiId,
       description: 'API Gateway ID',
       exportName: `${this.stackName}-ApiId`,
+    });
+
+    new cdk.CfnOutput(this, 'Migrate006LambdaName', {
+      value: migrate006Lambda.functionName,
+      description: 'Invoke-only: migration 006 (aws lambda invoke)',
+      exportName: `${this.stackName}-Migrate006LambdaName`,
+    });
+
+    new cdk.CfnOutput(this, 'MigrateLambdaName', {
+      value: migrateLambda.functionName,
+      description: 'Schema migration (DDL + views). POST /migrate or aws lambda invoke',
+      exportName: `${this.stackName}-MigrateLambdaName`,
+    });
+
+    new cdk.CfnOutput(this, 'SeedTestUsersLambdaName', {
+      value: seedTestUsersLambda.functionName,
+      description: 'Invoke-only: seed test users to RDS (aws lambda invoke)',
+      exportName: `${this.stackName}-SeedTestUsersLambdaName`,
+    });
+
+    new cdk.CfnOutput(this, 'DbProdCleanupLambdaName', {
+      value: dbProdCleanupLambda.functionName,
+      description: 'Invoke-only: transactional prod DB cleanup (aws lambda invoke)',
+      exportName: `${this.stackName}-DbProdCleanupLambdaName`,
     });
   }
 }

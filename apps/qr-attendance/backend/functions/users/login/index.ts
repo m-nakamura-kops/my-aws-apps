@@ -5,7 +5,7 @@
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { CognitoIdentityProviderClient, InitiateAuthCommand } from '@aws-sdk/client-cognito-identity-provider';
-import { getDB } from '../../../shared/db/connection';
+import { getDB, withConnection } from '../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../shared/utils/response';
 import * as crypto from 'crypto';
@@ -22,6 +22,12 @@ export const handler = async (
   if (event.httpMethod === 'OPTIONS') {
     return corsResponse();
   }
+
+  // モジュール読み込み時の Cognito 利用判定（Lambda 環境変数が空だと DB ハッシュ比較に落ちる）
+  console.log('[login] useCognito=', useCognito, {
+    USER_POOL_ID_set: Boolean(userPoolId),
+    COGNITO_CLIENT_ID_set: Boolean(cognitoClientId),
+  });
 
   try {
     // リクエストボディの解析
@@ -45,19 +51,30 @@ export const handler = async (
 
     // データベース接続を初期化
     await initDBFromSecrets();
-    const db = getDB();
+    const pool = getDB();
 
-    // ユーザー情報を取得
-    const [users] = await db.execute(
-      'SELECT email, password, name_kanji, name_kana, org_id, role_flag FROM users WHERE email = ?',
-      [email]
-    ) as any[];
+    // ユーザー情報を取得（is_active カラム未導入の DB でも動作するよう SELECT に含めない）
+    const [users] = (await withConnection(pool, async (conn) =>
+      conn.execute(
+        'SELECT email, password, name_kanji, name_kana, org_id, role_flag FROM users WHERE email = ?',
+        [email]
+      )
+    )) as any[];
 
     if (users.length === 0) {
+      console.log('[login] DB: no row for email=', email, '(seed-test-users がこの RDS に届いていない可能性)');
       return errorResponse('UNAUTHORIZED', 'Invalid email or password', 401);
     }
 
     const user = users[0];
+    // パスワード値はログに出さず、デバッグ用に行の存在と role のみ
+    console.log('User found in DB:', {
+      email: user.email,
+      name_kanji: user.name_kanji,
+      org_id: user.org_id,
+      role_flag: user.role_flag,
+      password_stored_length: user.password != null ? String(user.password).length : 0,
+    });
 
     // 認証処理
     let authToken = '';
@@ -76,6 +93,16 @@ export const handler = async (
         });
 
         const authResponse = await cognitoClient.send(authCommand);
+
+        if (authResponse.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
+          return successResponse({
+            challengeName: 'NEW_PASSWORD_REQUIRED',
+            session: authResponse.Session,
+            email,
+            userName: user.name_kanji || email,
+            roleFlag: user.role_flag || 1,
+          });
+        }
 
         if (!authResponse.AuthenticationResult) {
           return errorResponse('UNAUTHORIZED', 'Invalid credentials', 401);
@@ -127,12 +154,21 @@ export const handler = async (
       return errorResponse('UNAUTHORIZED', 'Invalid email or password', 401);
     }
 
-    // DB接続エラー（ローカルでMySQL未起動など）
+    // DB接続エラー（ローカルでMySQL未起動・Too many connections等）
     const code = error?.code ?? error?.errno;
+    const msg = error?.message ?? '';
     if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ETIMEDOUT' || code === 'ER_ACCESS_DENIED_ERROR') {
       return errorResponse(
         'SERVICE_UNAVAILABLE',
         'Database connection failed. Ensure MySQL is running and DB_HOST/DB_USER/DB_PASSWORD/DB_NAME are set.',
+        503,
+        error.message
+      );
+    }
+    if (code === 'ER_CON_COUNT_ERROR' || (typeof msg === 'string' && msg.includes('Too many connections'))) {
+      return errorResponse(
+        'SERVICE_UNAVAILABLE',
+        'Database is busy (too many connections). Please retry in a moment.',
         503,
         error.message
       );

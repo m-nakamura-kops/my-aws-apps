@@ -4,28 +4,24 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 
 export const handler = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-  // CORSプリフライトリクエスト対応
   if (event.httpMethod === 'OPTIONS') {
     return corsResponse();
   }
 
   try {
-    // パスパラメータからeventIdを取得
     const eventId = event.pathParameters?.eventId;
     if (!eventId) {
       return errorResponse('BAD_REQUEST', 'eventId is required', 400);
     }
 
-    // クエリパラメータまたはリクエストボディからemailを取得
     let email: string | undefined;
-    
     if (event.queryStringParameters?.email) {
       email = event.queryStringParameters.email;
     } else if (event.body) {
@@ -37,35 +33,32 @@ export const handler = async (
       return errorResponse('BAD_REQUEST', 'email is required', 400);
     }
 
-    // データベース接続を初期化
     await initDBFromSecrets();
-    const db = getDB();
+    const pool = getDB();
 
-    // イベントの存在確認
-    const [events] = await db.execute(
-      'SELECT * FROM events WHERE event_id = ?',
-      [eventId]
-    ) as any[];
+    type Outcome = { kind: 'ok' } | { kind: 'no_event' } | { kind: 'no_reg' };
+    const outcome = await withConnection(pool, async (conn): Promise<Outcome> => {
+      const [events] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId])) as any[];
+      if (events.length === 0) {
+        return { kind: 'no_event' };
+      }
+      const [registrations] = (await conn.execute(
+        'SELECT * FROM registrations WHERE email = ? AND event_id = ?',
+        [email, eventId]
+      )) as any[];
+      if (registrations.length === 0) {
+        return { kind: 'no_reg' };
+      }
+      await conn.execute('DELETE FROM registrations WHERE email = ? AND event_id = ?', [email, eventId]);
+      return { kind: 'ok' };
+    });
 
-    if (events.length === 0) {
+    if (outcome.kind === 'no_event') {
       return errorResponse('NOT_FOUND', 'Event not found', 404);
     }
-
-    // 申込の存在確認
-    const [registrations] = await db.execute(
-      'SELECT * FROM registrations WHERE email = ? AND event_id = ?',
-      [email, eventId]
-    ) as any[];
-
-    if (registrations.length === 0) {
+    if (outcome.kind === 'no_reg') {
       return errorResponse('NOT_FOUND', 'Registration not found', 404);
     }
-
-    // 参加申込を削除
-    await db.execute(
-      'DELETE FROM registrations WHERE email = ? AND event_id = ?',
-      [email, eventId]
-    );
 
     return successResponse({
       message: '参加申込を取消しました',
@@ -74,11 +67,6 @@ export const handler = async (
     });
   } catch (error: any) {
     console.error('Unregister from event error:', error);
-    return errorResponse(
-      'INTERNAL_ERROR',
-      'An internal error occurred',
-      500,
-      error.message
-    );
+    return errorResponse('INTERNAL_ERROR', 'An internal error occurred', 500, error.message);
   }
 };

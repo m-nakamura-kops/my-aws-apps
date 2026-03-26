@@ -6,10 +6,10 @@ import { useAuth, UserRole } from '@/contexts/AuthContext';
 import { RoleGuard } from '@/components/auth/RoleGuard';
 import { apiClient } from '@/lib/api-client';
 import Link from 'next/link';
-import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import ErrorAlert from '@/components/ui/ErrorAlert';
 import TableSkeleton from '@/components/ui/TableSkeleton';
 import LoadingButton from '@/components/ui/LoadingButton';
+import EmergencyMobileBanner from '@/components/ui/EmergencyMobileBanner';
 
 interface Registration {
   reg_id: number;
@@ -40,7 +40,7 @@ function AdminRegistrationsContent() {
       setLoading(true);
       setError('');
       const limit = 100;
-      const response = await apiClient.getRegistrations({
+      const response = await apiClient.getAdminRegistrations({
         limit,
         offset,
       });
@@ -52,6 +52,10 @@ function AdminRegistrationsContent() {
       setPagination(response.pagination);
     } catch (err: any) {
       setError(err.message || '申込一覧の取得に失敗しました');
+      if (offset === 0) {
+        setRegistrations([]);
+        setPagination((p) => ({ ...p, total: 0, hasMore: false }));
+      }
     } finally {
       setLoading(false);
     }
@@ -82,6 +86,7 @@ function AdminRegistrationsContent() {
 
   return (
     <main className="min-h-screen p-8 bg-gray-50">
+      <EmergencyMobileBanner />
       <div className="max-w-6xl mx-auto">
         <div className="flex justify-between items-center mb-8">
           <div>
@@ -91,7 +96,7 @@ function AdminRegistrationsContent() {
             </p>
           </div>
           <Link
-            href="/"
+            href="/home"
             className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
           >
             ホームに戻る
@@ -121,73 +126,59 @@ function AdminRegistrationsContent() {
           </div>
         ) : (
           <div className="bg-white shadow rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
+            {/* PC: テーブル（≥768px） */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      イベント名
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      申込者
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      開催日時
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      開催場所
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      申込日時
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      操作
-                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">申込日時</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">イベント名</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">開催日時</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">申込者</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">開催場所</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {registrations.map((reg) => (
                     <tr key={reg.reg_id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDate(reg.registration_date)}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <Link
-                          href={`/admin/events/${reg.event_id}/participants`}
-                          className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
-                        >
-                          {reg.event_name}
-                        </Link>
+                        <Link href={`/admin/events/${reg.event_id}/participants`} className="text-sm font-medium text-indigo-600 hover:text-indigo-800">{reg.event_name}</Link>
                         <div className="text-xs text-gray-500">ID: {reg.event_id}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {formatDateOnly(reg.event_date)}
+                        <div className="text-xs text-gray-500">{new Date(reg.event_date).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{reg.user_name}</div>
                         <div className="text-xs text-gray-500">{reg.email}</div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {formatDateOnly(reg.event_date)}
-                        <div className="text-xs text-gray-500">
-                          {new Date(reg.event_date).toLocaleTimeString('ja-JP', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {reg.location || '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {formatDate(reg.registration_date)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <Link
-                          href={`/admin/events/${reg.event_id}/participants`}
-                          className="text-indigo-600 hover:text-indigo-900"
-                        >
-                          参加者一覧
-                        </Link>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{reg.location || '-'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <Link href={`/admin/events/${reg.event_id}/participants`} className="text-indigo-600 hover:text-indigo-900 mr-3 min-h-[44px] inline-block">出席確認</Link>
+                        <Link href={`/admin/events/${reg.event_id}/participants`} className="text-indigo-600 hover:text-indigo-900 min-h-[44px] inline-block">参加者一覧</Link>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+            {/* スマホ: カード（<768px） */}
+            <div className="md:hidden divide-y divide-gray-200">
+              {registrations.map((reg) => (
+                <div key={reg.reg_id} className="p-4 min-h-[44px]">
+                  <div className="text-sm text-gray-500">{formatDate(reg.registration_date)}</div>
+                  <div className="font-medium text-gray-900 mt-1">{reg.event_name}</div>
+                  <div className="text-sm text-gray-600">申込者: {reg.user_name} ({reg.email})</div>
+                  <div className="text-sm text-gray-500 mt-0.5">{formatDateOnly(reg.event_date)} · {reg.location || '-'}</div>
+                  <div className="flex gap-2 mt-2">
+                    <Link href={`/admin/events/${reg.event_id}/participants`} className="px-3 py-2 text-indigo-600 border border-indigo-600 rounded text-sm min-h-[44px] inline-flex items-center">出席確認</Link>
+                    <Link href={`/admin/events/${reg.event_id}/participants`} className="px-3 py-2 text-gray-700 border border-gray-400 rounded text-sm min-h-[44px] inline-flex items-center">参加者一覧</Link>
+                  </div>
+                </div>
+              ))}
             </div>
             {pagination.total > 0 && (
               <div className="bg-gray-50 px-6 py-4 border-t border-gray-200">

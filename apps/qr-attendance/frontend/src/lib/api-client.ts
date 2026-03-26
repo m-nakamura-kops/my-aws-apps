@@ -1,17 +1,18 @@
 /**
  * APIクライアント
+ *
+ * ベース URL は下記の本番 API Gateway に固定。
+ * NEXT_PUBLIC_API_URL や localhost:3001 など環境変数・フォールバックは参照しない（設定漏れ・誤設定でも常に AWS を向く）。
  */
 
-function getApiBaseUrl(): string {
-  const env = process.env.NEXT_PUBLIC_API_URL || '';
-  if (env) return env;
-  if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
-    return 'http://localhost:3001';
-  }
-  return '';
-}
+import { NewPasswordRequiredError } from '@/lib/auth-errors';
 
-const API_BASE_URL = getApiBaseUrl();
+/** 本番 API Gateway（execute-api）— ビルド・.env に依存しない */
+const API_BASE_URL = 'https://xcv8usy3dh.execute-api.ap-northeast-1.amazonaws.com/prod';
+
+function getApiBaseUrl(): string {
+  return API_BASE_URL.replace(/\/+$/, '');
+}
 
 export interface ApiError {
   error: string;
@@ -20,26 +21,23 @@ export interface ApiError {
 }
 
 export class ApiClient {
-  private baseUrl: string;
+  constructor() {}
 
-  constructor(baseUrl: string) {
-    this.baseUrl = baseUrl;
-  }
-
-  /** リクエスト時に参照。SSR/ビルド時は baseUrl が空になるため、ブラウザでは localhost:3001 を補正 */
   private getBaseUrl(): string {
-    if (this.baseUrl) return this.baseUrl;
-    if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
-      return 'http://localhost:3001';
-    }
-    return '';
+    return getApiBaseUrl();
   }
 
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${this.getBaseUrl()}${endpoint}`;
+    const base = this.getBaseUrl();
+    if (!base) {
+      throw new Error(
+        'NEXT_PUBLIC_API_URL が未設定です。apps/qr-attendance/frontend/.env.local に API のベース URL を設定し、開発サーバーを再起動してください。'
+      );
+    }
+    const url = `${base}${endpoint}`;
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -99,14 +97,9 @@ export class ApiClient {
 
       return response.json();
     } catch (error: any) {
-      // ネットワークエラー（接続拒否・バックエンド未起動など）
-      const baseUrl = this.getBaseUrl();
-      const isLocalApi = typeof window !== 'undefined' && baseUrl.includes('localhost:3001');
       if (error.name === 'TypeError' && (error.message?.includes('fetch') || error.message?.includes('Failed to fetch'))) {
         throw new Error(
-          isLocalApi
-            ? 'ネットワークエラー: バックエンド（localhost:3001）に接続できません。別ターミナルで「cd apps/qr-attendance/backend && npx ts-node local-server.ts」を実行してAPIサーバーを起動してください。'
-            : 'ネットワークエラー: サーバーに接続できません。インターネット接続を確認してください。'
+          'ネットワークエラー: API に接続できません。インターネット接続と API Gateway の稼働を確認してください。'
         );
       }
       
@@ -121,17 +114,39 @@ export class ApiClient {
   }
 
   async login(email: string, password: string) {
-    return this.request<{
+    const base = this.getBaseUrl();
+    const url = `${base}/v1/users/login`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    let data: any;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(`HTTP ${response.status}: レスポンスの解析に失敗しました`);
+    }
+    if (!response.ok) {
+      const errorMessage =
+        data?.message || data?.error || `HTTP ${response.status}: ${response.statusText}`;
+      const enhancedError = new Error(
+        response.status === 401 ? `認証が必要です: ${errorMessage}` : errorMessage
+      );
+      (enhancedError as any).status = response.status;
+      throw enhancedError;
+    }
+    if (data?.challengeName === 'NEW_PASSWORD_REQUIRED') {
+      throw new NewPasswordRequiredError(email);
+    }
+    return data as {
       token: string;
       refreshToken: string;
       userId: string;
       userName: string;
       orgId: string | null;
       roleFlag: number;
-    }>('/v1/users/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
+    };
   }
 
   async register(data: {
@@ -277,6 +292,17 @@ export class ApiClient {
     });
   }
 
+  /** 現在ログイン中ユーザー情報（マイページ用）。GET /v1/users/me */
+  async getMe() {
+    return this.request<{
+      email: string;
+      name_kanji: string | null;
+      name_kana: string | null;
+      role_flag: number;
+      org_id: string | null;
+    }>('/v1/users/me', { method: 'GET' });
+  }
+
   /** 利用者用マイQR取得（スマホで表示用）。有効期限約10分 */
   async getMyQrData() {
     return this.request<{
@@ -301,6 +327,32 @@ export class ApiClient {
     }>('/v1/users/attendance', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  /** 手動打刻用・生徒検索（スタッフ以上）。GET /v1/students/search?q= */
+  async searchStudentsForManual(q: string) {
+    const query = new URLSearchParams({ q: q.trim() }).toString();
+    return this.request<{
+      users: Array<{ user_id: string; name_kanji: string; name_kana: string; email: string }>;
+    }>(`/v1/students/search?${query}`, { method: 'GET' });
+  }
+
+  /** 手動打刻実行（スタッフ以上）。POST /v1/attendance/manual。action: 'entry' | 'exit' で入室/退出を指定 */
+  async manualPunchAttendance(data: { event_id: number; email: string; action?: 'entry' | 'exit' }) {
+    return this.request<{
+      log_id: number;
+      message: string;
+      action?: string;
+      in_time?: string;
+      out_time?: string;
+    }>('/v1/attendance/manual', {
+      method: 'POST',
+      body: JSON.stringify({
+        event_id: data.event_id,
+        email: data.email,
+        ...(data.action ? { action: data.action } : {}),
+      }),
     });
   }
 
@@ -370,6 +422,24 @@ export class ApiClient {
     });
   }
 
+  /** 自分のスケジュール（申込イベント＋打刻有無）。GET /v1/users/schedule?month=YYYY-MM */
+  async getSchedule(month?: string) {
+    const query = month ? `?month=${encodeURIComponent(month)}` : '';
+    return this.request<{
+      schedule: Array<{
+        event_id: number;
+        event_name: string;
+        event_date: string;
+        location: string | null;
+        capacity: number | null;
+        summary: string | null;
+        is_registered: boolean;
+        is_attended: boolean;
+      }>;
+      month: string;
+    }>(`/v1/users/schedule${query}`, { method: 'GET' });
+  }
+
   async getRegistrations(params?: {
     email?: string;
     event_id?: number;
@@ -406,6 +476,35 @@ export class ApiClient {
     });
   }
 
+  /** 管理者用：全申込一覧（横断・時系列）。email 不要。 */
+  async getAdminRegistrations(params?: {
+    limit?: number;
+    offset?: number;
+    event_id?: number;
+    email?: string;
+  }) {
+    const queryParams = new URLSearchParams();
+    if (params?.limit != null) queryParams.append('limit', params.limit.toString());
+    if (params?.offset != null) queryParams.append('offset', params.offset.toString());
+    if (params?.event_id != null) queryParams.append('event_id', params.event_id.toString());
+    if (params?.email) queryParams.append('email', params.email);
+    const query = queryParams.toString();
+    return this.request<{
+      registrations: Array<{
+        reg_id: number;
+        email: string;
+        user_name: string;
+        event_id: number;
+        event_name: string;
+        event_date: string;
+        location: string | null;
+        capacity: number | null;
+        registration_date: string;
+      }>;
+      pagination: { total: number; limit: number; offset: number; hasMore: boolean };
+    }>(`/v1/admin/registrations${query ? `?${query}` : ''}`, { method: 'GET' });
+  }
+
   // 管理者用API
   async getEventParticipants(eventId: number, params?: {
     limit?: number;
@@ -428,6 +527,8 @@ export class ApiClient {
         org_id: string | null;
         role_flag: number | null;
         registration_date: string;
+        in_time: string | null;
+        out_time: string | null;
       }>;
       pagination: {
         total: number;
@@ -479,6 +580,21 @@ export class ApiClient {
     });
   }
 
+  /** 出席レポートCSVをBlobで取得（BOM付きUTF-8）。ダウンロード用。 */
+  async getEventReportCsvBlob(eventId: number): Promise<Blob> {
+    const url = `${this.getBaseUrl()}/v1/admin/reports/events/${eventId}/csv`;
+    const headers: Record<string, string> = {};
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('authToken');
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { method: 'GET', headers });
+    if (!response.ok) {
+      throw new Error(response.status === 403 ? 'CSVのダウンロード権限がありません' : `CSVの取得に失敗しました (${response.status})`);
+    }
+    return response.blob();
+  }
+
   // 生徒管理API
   async listStudents(params?: {
     limit?: number;
@@ -503,6 +619,7 @@ export class ApiClient {
         remarks: string | null;
         registration_date: string;
         last_attendance_date: string | null;
+        is_active?: boolean;
       }>;
       pagination: {
         total: number;
@@ -517,7 +634,6 @@ export class ApiClient {
 
   async createStudent(data: {
     email: string;
-    password: string;
     name_kanji: string;
     name_kana: string;
     tel: string;
@@ -528,6 +644,7 @@ export class ApiClient {
       userId: string;
       status: string;
       message: string;
+      invitationSent?: boolean;
     }>('/v1/admin/students', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -540,22 +657,23 @@ export class ApiClient {
     tel?: string;
     org_id?: string;
     remarks?: string;
-    password?: string;
+    is_active?: boolean;
   }) {
     return this.request<{
       student: any;
       message: string;
-    }>(`/v1/admin/students/${encodeURIComponent(email)}`, {
+    }>(`/v1/admin/students/${encodeURIComponent(email.trim())}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async deleteStudent(email: string) {
+    const id = email.trim();
     return this.request<{
       message: string;
       email: string;
-    }>(`/v1/admin/students/${encodeURIComponent(email)}`, {
+    }>(`/v1/admin/students/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
   }
@@ -609,7 +727,6 @@ export class ApiClient {
 
   async inviteStaff(data: {
     email: string;
-    password?: string;
     name_kanji?: string;
     name_kana?: string;
     tel?: string;
@@ -634,7 +751,7 @@ export class ApiClient {
     org_id?: string;
     remarks?: string;
     password?: string;
-    role_flag?: number; // 2=スタッフ, 3=管理者
+    role_flag?: number; // 1=利用者, 2=スタッフ, 3=管理者
   }) {
     return this.request<{
       staff: any;
@@ -645,15 +762,95 @@ export class ApiClient {
     });
   }
 
+  /** スタッフ／管理者ユーザーを DB および可能なら Cognito から物理削除 */
   async deleteStaff(email: string) {
     return this.request<{
       message: string;
       email: string;
-      attendance_records_count?: number;
+      cognito_deleted?: boolean;
+      cognito_error?: string;
     }>(`/v1/admin/staffs/${encodeURIComponent(email)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // お知らせ（利用者向け・公開・掲載期間内のみ）
+  async getNews(params?: { limit?: number; page?: number }) {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.append('limit', params.limit.toString());
+    if (params?.page != null) q.append('page', params.page.toString());
+    const query = q.toString();
+    return this.request<{
+      news: Array<{
+        id: number;
+        title: string;
+        content: string;
+        announcement_type: number; // 1=通常, 2=重要
+        published_at: string;
+        expired_at: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+      totalCount: number;
+      hasNextPage: boolean;
+    }>(`/v1/news${query ? `?${query}` : ''}`, { method: 'GET' });
+  }
+
+  // お知らせ管理（管理者・全件）
+  async getAdminNews(params?: { limit?: number; offset?: number }) {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.append('limit', params.limit.toString());
+    if (params?.offset != null) q.append('offset', params.offset.toString());
+    const query = q.toString();
+    return this.request<{
+      news: Array<{
+        id: number;
+        title: string;
+        content: string;
+        is_published: boolean;
+        announcement_type: number;
+        published_at: string;
+        expired_at: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+      pagination: { total: number; limit: number; offset: number; hasMore: boolean };
+    }>(`/v1/admin/news${query ? `?${query}` : ''}`, { method: 'GET' });
+  }
+
+  async createNews(data: {
+    title: string;
+    content: string;
+    is_published: boolean;
+    announcement_type: number; // 1=通常, 2=重要
+    published_at: string;
+    expired_at?: string | null;
+  }) {
+    return this.request<{ id: number; news: any }>(`/v1/admin/news`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateNews(id: number, data: {
+    title?: string;
+    content?: string;
+    is_published?: boolean;
+    announcement_type?: number;
+    published_at?: string;
+    expired_at?: string | null;
+  }) {
+    return this.request<{ news: any }>(`/v1/admin/news/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteNews(id: number) {
+    return this.request<{ message: string; id: number }>(`/v1/admin/news/${id}`, {
       method: 'DELETE',
     });
   }
 }
 
-export const apiClient = new ApiClient(API_BASE_URL);
+export const apiClient = new ApiClient();

@@ -2,19 +2,324 @@
  * QRコード打刻Lambda関数
  * POST /v1/users/attendance
  *
- * 【スタッフスキャン方式】スタッフが利用者のスマホに表示されたQRをスキャンして打刻する。
- * リクエスト: { qr_code_data, signature, event_id } + Authorization: Bearer <スタッフのトークン>
- * QR内容: { email（利用者）, timestamp }（有効10分）
+ * 退室時: 直近の入室行（type=entry）を log_id で UPDATE し out_time を埋める（履歴APIが entry 行を見ても未退室にならない）。
+ *         併せて type=exit の行を INSERT（v_attendance_details の結合用）。
+ * 入室時: type=entry の行を INSERT。
+ * 時刻: すべて JST（Asia/Tokyo）の YYYY-MM-DD HH:mm:ss で RDS DATETIME と整合。
  */
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../shared/db/connection';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+import { getDB, withConnection, type Pool } from '../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../shared/utils/response';
-import { getUserEmailFromRequest, checkStaffOrAdminPermission } from '../../../shared/utils/auth';
+import { checkStaffOrAdminPermission } from '../../../shared/utils/auth';
 import * as crypto from 'crypto';
 
-const USER_QR_VALID_MS = 10 * 60 * 1000; // 利用者QR 10分
-const QR_CLOCK_SKEW_MS = 60 * 1000; // サーバー時刻ずれの許容（1分）
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const TZ_TOKYO = 'Asia/Tokyo';
+
+/** MySQL DATETIME として安全な形式（厳格） */
+const MYSQL_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
+/**
+ * JST の壁時計を `YYYY-MM-DD HH:mm:ss` で返す。
+ * 空・不正・Invalid Date のときは再取得 → それでもダメなら UTC+9 のフォールバック。
+ * out_time / in_time に空文字が入らないようにする。
+ */
+function nowJstMysqlDatetime(): string {
+  const primary = dayjs().tz(TZ_TOKYO).format('YYYY-MM-DD HH:mm:ss');
+  if (isValidMysqlDatetimeString(primary)) {
+    return primary;
+  }
+  const retry = dayjs().tz(TZ_TOKYO).format('YYYY-MM-DD HH:mm:ss');
+  if (isValidMysqlDatetimeString(retry)) {
+    return retry;
+  }
+  const fallbackUtcPlus9 = dayjs.utc().add(9, 'hour').format('YYYY-MM-DD HH:mm:ss');
+  if (isValidMysqlDatetimeString(fallbackUtcPlus9)) {
+    return fallbackUtcPlus9;
+  }
+  const last = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  if (isValidMysqlDatetimeString(last)) {
+    return last;
+  }
+  throw new Error('Failed to compute JST datetime for MySQL');
+}
+
+function isValidMysqlDatetimeString(s: unknown): s is string {
+  if (s === undefined || s === null || typeof s !== 'string') return false;
+  const t = s.trim();
+  if (t === '' || t.includes('Invalid')) return false;
+  if (!MYSQL_DATETIME_RE.test(t)) return false;
+  const [datePart, timePart] = t.split(' ');
+  if (!datePart || !timePart) return false;
+  const [Y, M, D] = datePart.split('-').map((x) => parseInt(x, 10));
+  const [h, m, sec] = timePart.split(':').map((x) => parseInt(x, 10));
+  if (
+    Number.isNaN(Y) ||
+    Number.isNaN(M) ||
+    Number.isNaN(D) ||
+    Number.isNaN(h) ||
+    Number.isNaN(m) ||
+    Number.isNaN(sec)
+  ) {
+    return false;
+  }
+  if (Y < 1970 || Y > 2100 || M < 1 || M > 12 || D < 1 || D > 31) return false;
+  if (h > 23 || m > 59 || sec > 59) return false;
+  return true;
+}
+
+/** UPDATE / INSERT 直前に必ず通す（空・undefined を絶対にバインドしない） */
+function requireJstDatetimeForBind(candidate: string | undefined | null, label: string): string {
+  if (candidate !== undefined && candidate !== null && isValidMysqlDatetimeString(candidate)) {
+    return candidate.trim();
+  }
+  const fresh = nowJstMysqlDatetime();
+  if (!isValidMysqlDatetimeString(fresh)) {
+    throw new Error(`Invalid datetime after refresh for ${label}`);
+  }
+  return fresh;
+}
+
+/** VARCHAR 系プレースホルダ用（undefined でプレースホルダがずれないよう常に文字列） */
+function requireNonEmptyString(value: unknown, label: string): string {
+  const s = value === undefined || value === null ? '' : String(value).trim();
+  if (s === '') {
+    throw new Error(`Missing required string for SQL bind: ${label}`);
+  }
+  return s;
+}
+
+const USER_QR_VALID_MS = 10 * 60 * 1000;
+const QR_CLOCK_SKEW_MS = 60 * 1000;
+
+function rowType(latest: Record<string, unknown> | undefined): string {
+  if (!latest || latest.type == null) return '';
+  const t = latest.type as unknown;
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(t)) {
+    return t.toString('utf8').trim().toLowerCase();
+  }
+  return String(t).trim().toLowerCase();
+}
+
+function isOutTimeEmpty(out: unknown): boolean {
+  if (out == null || out === '') return true;
+  if (out instanceof Date) return false;
+  const s = String(out).trim();
+  return s === '' || s === 'null' || s.startsWith('0000-00-00');
+}
+
+/**
+ * 「この時点で退室処理が必要」= 最新行がまだ開いた入室状態
+ * - 最新が exit → いいえ
+ * - 最新が entry かつ out_time 未設定 → はい（006 + 履歴表示の両方に効く）
+ * - レガシー（type 空）かつ out_time 未設定 → はい
+ */
+function needsCheckout(latest: Record<string, unknown> | undefined): boolean {
+  if (!latest) return false;
+  const t = rowType(latest);
+  if (t === 'exit') return false;
+  if (!isOutTimeEmpty(latest.out_time)) return false;
+  return t === 'entry' || t === '';
+}
+
+type PunchResult = {
+  log_id: number;
+  action: 'in' | 'out';
+  in_time: string | null;
+  out_time?: string | null;
+  message: string;
+};
+
+async function fetchLatestAttendanceRow(
+  pool: Pool,
+  userEmail: string,
+  eventId: number
+): Promise<Record<string, unknown> | undefined> {
+  return withConnection(pool, async (conn) => {
+    const [rows] = (await conn.execute(
+      'SELECT * FROM attendance_logs WHERE email = ? AND event_id = ? ORDER BY log_id DESC LIMIT 1',
+      [userEmail, eventId]
+    )) as any[];
+    return rows[0] as Record<string, unknown> | undefined;
+  });
+}
+
+async function ensureRegistrationForWalkIn(pool: Pool, userEmail: string, eventId: number): Promise<void> {
+  await withConnection(pool, async (conn) => {
+    const [existing] = (await conn.execute(
+      'SELECT reg_id FROM registrations WHERE email = ? AND event_id = ? LIMIT 1',
+      [userEmail, eventId]
+    )) as any[];
+    if (existing.length > 0) return;
+    try {
+      await conn.execute('INSERT INTO registrations (email, event_id) VALUES (?, ?)', [userEmail, eventId]);
+    } catch (e: any) {
+      const c = e?.code ?? e?.errno;
+      if (c === 'ER_DUP_ENTRY' || c === 1062) return;
+      throw e;
+    }
+  });
+}
+
+function isDup(e: any): boolean {
+  const c = e?.code ?? e?.errno;
+  return c === 'ER_DUP_ENTRY' || c === 1062;
+}
+
+/** DB 現在状態からレスポンスを組み立てる（冪等） */
+async function punchResultFromDbState(pool: Pool, userEmail: string, eventId: number): Promise<PunchResult> {
+  const latest = await fetchLatestAttendanceRow(pool, userEmail, eventId);
+  if (!latest) {
+    throw new Error('No attendance row after punch');
+  }
+  const t = rowType(latest);
+  if (t === 'exit') {
+    const [enRows] = (await withConnection(pool, async (conn) =>
+      conn.execute(
+        `SELECT log_id, in_time FROM attendance_logs WHERE email = ? AND event_id = ? AND type = 'entry' ORDER BY log_id DESC LIMIT 1`,
+        [userEmail, eventId]
+      )
+    )) as any[];
+    const en = enRows[0];
+    return {
+      log_id: Number(latest.log_id),
+      action: 'out',
+      in_time: en?.in_time ?? null,
+      out_time: latest.out_time as string | null,
+      message: '退室打刻が完了しました',
+    };
+  }
+  // entry / レガシー: out_time が埋まっていれば退室済み（UPDATE 済みで exit 行より log_id が小さい場合）
+  if (!isOutTimeEmpty(latest.out_time)) {
+    const [exRows] = (await withConnection(pool, async (conn) =>
+      conn.execute(
+        `SELECT log_id, out_time FROM attendance_logs WHERE email = ? AND event_id = ? AND type = 'exit' ORDER BY log_id DESC LIMIT 1`,
+        [userEmail, eventId]
+      )
+    )) as any[];
+    const ex = exRows[0];
+    const [enRows] = (await withConnection(pool, async (conn) =>
+      conn.execute(
+        `SELECT log_id, in_time FROM attendance_logs WHERE email = ? AND event_id = ? AND type = 'entry' ORDER BY log_id DESC LIMIT 1`,
+        [userEmail, eventId]
+      )
+    )) as any[];
+    const en = enRows[0];
+    return {
+      log_id: ex ? Number(ex.log_id) : Number(latest.log_id),
+      action: 'out',
+      in_time: (en?.in_time ?? latest.in_time) as string | null,
+      out_time: (ex?.out_time ?? latest.out_time) as string | null,
+      message: '退室打刻が完了しました',
+    };
+  }
+  return {
+    log_id: Number(latest.log_id),
+    action: 'in',
+    in_time: (latest.in_time as string | null) ?? null,
+    message: '入室打刻が完了しました',
+  };
+}
+
+async function punchEntryExitToggle(
+  pool: Pool,
+  userEmail: string,
+  eventId: number,
+  staffEmail: string,
+  retryDepth = 0
+): Promise<PunchResult> {
+  if (retryDepth > 5) {
+    throw new Error('Attendance punch retry limit exceeded');
+  }
+
+  const latest = await fetchLatestAttendanceRow(pool, userEmail, eventId);
+  const checkout = needsCheckout(latest);
+  const staffEmailBound = requireNonEmptyString(staffEmail, 'staff_email');
+
+  if (checkout && latest) {
+    const entryLogId = Number(latest.log_id);
+    const entryInTime = (latest.in_time as string | null) ?? null;
+
+    const outTimeForDb = requireJstDatetimeForBind(nowJstMysqlDatetime(), 'out_time (checkout UPDATE)');
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // プレースホルダ順: 1=out_time(DATETIME文字列), 2=staff_email, 3=log_id, 4=email, 5=event_id
+      const [upd] = (await conn.execute(
+        `UPDATE attendance_logs
+         SET out_time = ?, staff_email = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE log_id = ? AND email = ? AND event_id = ?
+           AND (type = 'entry' OR type IS NULL OR type = '')
+           AND (out_time IS NULL)`,
+        [outTimeForDb, staffEmailBound, entryLogId, userEmail, eventId]
+      )) as any;
+
+      if (upd.affectedRows === 0) {
+        await conn.rollback();
+        return punchEntryExitToggle(pool, userEmail, eventId, staffEmailBound, retryDepth + 1);
+      }
+
+      const outTimeInsert = requireJstDatetimeForBind(outTimeForDb, 'out_time (checkout INSERT exit row)');
+      await conn.execute(
+        `INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
+         VALUES (?, ?, 'exit', NULL, ?, ?)`,
+        [userEmail, eventId, outTimeInsert, staffEmailBound]
+      );
+
+      await conn.commit();
+
+      return {
+        log_id: entryLogId,
+        action: 'out',
+        in_time: entryInTime,
+        out_time: outTimeInsert,
+        message: '退室打刻が完了しました',
+      };
+    } catch (e: any) {
+      try {
+        await conn.rollback();
+      } catch (_) {}
+
+      if (isDup(e)) {
+        return punchResultFromDbState(pool, userEmail, eventId);
+      }
+      throw e;
+    } finally {
+      conn.release();
+    }
+  }
+
+  // 入室: in_time は DATETIME 文字列、out_time は SQL の NULL（プレースホルダは使わない）
+  const inTimeForDb = requireJstDatetimeForBind(nowJstMysqlDatetime(), 'in_time (checkin INSERT)');
+  try {
+    return await withConnection(pool, async (conn) => {
+      const [result] = (await conn.execute(
+        `INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
+         VALUES (?, ?, 'entry', ?, NULL, ?)`,
+        [userEmail, eventId, inTimeForDb, staffEmailBound]
+      )) as any[];
+      return {
+        log_id: result.insertId,
+        action: 'in',
+        in_time: inTimeForDb,
+        message: '入室打刻が完了しました',
+      };
+    });
+  } catch (e: any) {
+    if (isDup(e)) {
+      return punchResultFromDbState(pool, userEmail, eventId);
+    }
+    throw e;
+  }
+}
 
 export const handler = async (
   event: APIGatewayProxyEvent
@@ -37,10 +342,7 @@ export const handler = async (
     }
 
     const secretKey = process.env.QR_SECRET_KEY || 'default-secret-key-change-in-production';
-    const expectedSignature = crypto
-      .createHmac('sha256', secretKey)
-      .update(qrData)
-      .digest('hex');
+    const expectedSignature = crypto.createHmac('sha256', secretKey).update(qrData).digest('hex');
 
     if (signature !== expectedSignature) {
       return errorResponse('UNAUTHORIZED', 'Invalid QR code signature', 401);
@@ -57,7 +359,6 @@ export const handler = async (
     await initDBFromSecrets();
     const db = getDB();
 
-    // スタッフスキャン方式: QRに email と timestamp のみ（event_id はリクエストで渡す）
     if (qrCodeInfo.email != null && eventIdParam != null) {
       const userEmail = String(qrCodeInfo.email);
       const qrTimestamp = Number(qrCodeInfo.timestamp);
@@ -77,61 +378,31 @@ export const handler = async (
           staffPermission.statusCode
         );
       }
-      const staffEmail = staffPermission.email;
+      const staffEmail = String(staffPermission.email ?? '').trim();
+      if (!staffEmail) {
+        return errorResponse('UNAUTHORIZED', 'Staff email missing from token', 401);
+      }
 
-      const [events] = await db.execute('SELECT * FROM events WHERE event_id = ?', [eventId]) as any[];
+      const [events] = (await withConnection(db, async (conn) =>
+        conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId])
+      )) as any[];
       if (events.length === 0) {
         return errorResponse('NOT_FOUND', 'Event not found', 404);
       }
 
-      const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [userEmail]) as any[];
+      const [users] = (await withConnection(db, async (conn) =>
+        conn.execute('SELECT * FROM users WHERE email = ?', [userEmail])
+      )) as any[];
       if (users.length === 0) {
         return errorResponse('NOT_FOUND', 'User not found', 404);
       }
 
-      // 申込済みチェック: 未申込の場合は 403
-      const [registrations] = await db.execute(
-        'SELECT * FROM registrations WHERE email = ? AND event_id = ?',
-        [userEmail, eventId]
-      ) as any[];
-      if (registrations.length === 0) {
-        return errorResponse('FORBIDDEN', 'User is not registered for this event', 403);
-      }
+      await ensureRegistrationForWalkIn(db, userEmail, eventId);
 
-      const [existingLogs] = await db.execute(
-        'SELECT * FROM attendance_logs WHERE email = ? AND event_id = ? ORDER BY in_time DESC LIMIT 1',
-        [userEmail, eventId]
-      ) as any[];
-
-      const nowDateTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
-
-      if (existingLogs.length === 0 || existingLogs[0].out_time) {
-        const [result] = await db.execute(
-          `INSERT INTO attendance_logs (email, event_id, in_time, staff_email) VALUES (?, ?, ?, ?)`,
-          [userEmail, eventId, nowDateTime, staffEmail]
-        ) as any[];
-        return successResponse({
-          log_id: result.insertId,
-          action: 'in',
-          in_time: nowDateTime,
-          message: '入室打刻が完了しました',
-        });
-      } else {
-        await db.execute(
-          'UPDATE attendance_logs SET out_time = ? WHERE log_id = ?',
-          [nowDateTime, existingLogs[0].log_id]
-        );
-        return successResponse({
-          log_id: existingLogs[0].log_id,
-          action: 'out',
-          in_time: existingLogs[0].in_time,
-          out_time: nowDateTime,
-          message: '退室打刻が完了しました',
-        });
-      }
+      const punch = await punchEntryExitToggle(db, userEmail, eventId, staffEmail);
+      return successResponse(punch);
     }
 
-    // 旧方式（イベントQRを利用者がスキャン）: QRに event_id と timestamp があり、body に email
     const eventId = qrCodeInfo.event_id;
     const qrTimestamp = qrCodeInfo.timestamp;
     const userEmail = body.email;
@@ -150,63 +421,26 @@ export const handler = async (
       return errorResponse('BAD_REQUEST', 'QR code has expired', 400);
     }
 
-    const [events] = await db.execute('SELECT * FROM events WHERE event_id = ?', [eventId]) as any[];
+    const [events] = (await withConnection(db, async (conn) =>
+      conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId])
+    )) as any[];
     if (events.length === 0) {
       return errorResponse('NOT_FOUND', 'Event not found', 404);
     }
 
-    const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [userEmail]) as any[];
+    const [users] = (await withConnection(db, async (conn) =>
+      conn.execute('SELECT * FROM users WHERE email = ?', [userEmail])
+    )) as any[];
     if (users.length === 0) {
       return errorResponse('NOT_FOUND', 'User not found', 404);
     }
 
-    // 申込済みチェック: 未申込の場合は 403
-    const [registrations] = await db.execute(
-      'SELECT * FROM registrations WHERE email = ? AND event_id = ?',
-      [userEmail, eventId]
-    ) as any[];
-    if (registrations.length === 0) {
-      return errorResponse('FORBIDDEN', 'User is not registered for this event', 403);
-    }
+    await ensureRegistrationForWalkIn(db, userEmail, eventId);
 
-    const [existingLogs] = await db.execute(
-      'SELECT * FROM attendance_logs WHERE email = ? AND event_id = ? ORDER BY in_time DESC LIMIT 1',
-      [userEmail, eventId]
-    ) as any[];
-
-    const nowDateTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
-
-    if (existingLogs.length === 0 || existingLogs[0].out_time) {
-      const [result] = await db.execute(
-        `INSERT INTO attendance_logs (email, event_id, in_time, staff_email) VALUES (?, ?, ?, ?)`,
-        [userEmail, eventId, nowDateTime, userEmail]
-      ) as any[];
-      return successResponse({
-        log_id: result.insertId,
-        action: 'in',
-        in_time: nowDateTime,
-        message: '入室打刻が完了しました',
-      });
-    } else {
-      await db.execute(
-        'UPDATE attendance_logs SET out_time = ? WHERE log_id = ?',
-        [nowDateTime, existingLogs[0].log_id]
-      );
-      return successResponse({
-        log_id: existingLogs[0].log_id,
-        action: 'out',
-        in_time: existingLogs[0].in_time,
-        out_time: nowDateTime,
-        message: '退室打刻が完了しました',
-      });
-    }
+    const punch = await punchEntryExitToggle(db, userEmail, eventId, userEmail);
+    return successResponse(punch);
   } catch (error: any) {
     console.error('Attendance punch error:', error);
-    return errorResponse(
-      'INTERNAL_ERROR',
-      'An internal error occurred',
-      500,
-      error.message
-    );
+    return errorResponse('INTERNAL_ERROR', 'An internal error occurred', 500, error.message);
   }
 };

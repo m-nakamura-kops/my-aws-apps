@@ -4,7 +4,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
@@ -40,10 +40,9 @@ export const handler = async (
       offset = 0;
     }
 
-    // データベース接続を取得
-    const db = getDB();
+    const pool = getDB();
 
-    // 生徒一覧取得（role_flag = 1 が利用者/生徒）
+    // 生徒一覧取得（role_flag = 1 が利用者/生徒）。is_active は COALESCE で未追加DB互換
     let query = `
       SELECT 
         u.email,
@@ -54,6 +53,7 @@ export const handler = async (
         u.remarks,
         u.created_at,
         u.updated_at,
+        COALESCE(u.is_active, 1) AS is_active,
         MAX(al.in_time) as last_attendance_date
       FROM users u
       LEFT JOIN attendance_logs al ON u.email = al.email
@@ -83,29 +83,30 @@ export const handler = async (
 
     query += ` GROUP BY u.email ORDER BY u.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
 
-    const [students] = await db.execute(query, params) as any[];
-
-    // 総件数を取得
-    let countQuery = `
+    const [students, countResult] = await withConnection(pool, async (conn) => {
+      const [st] = (await conn.execute(query, params)) as any[];
+      let countQuery = `
       SELECT COUNT(DISTINCT u.email) as total
       FROM users u
       WHERE u.role_flag = 1
     `;
-    if (search) {
-      countQuery += ` AND (
+      if (search) {
+        countQuery += ` AND (
         u.name_kanji LIKE ? OR 
         u.name_kana LIKE ? OR 
         u.email LIKE ?
       )`;
-    }
-    if (orgId) {
-      countQuery += ` AND u.org_id = ?`;
-    }
+      }
+      if (orgId) {
+        countQuery += ` AND u.org_id = ?`;
+      }
 
-    const [countResult] = await db.execute(countQuery, countParams) as any[];
+      const [cnt] = (await conn.execute(countQuery, countParams)) as any[];
+      return [st, cnt] as const;
+    });
     const total = countResult[0]?.total || 0;
 
-    // レスポンスデータの整形
+    // レスポンスデータの整形（入会日=created_at, ステータス=is_active）
     const formattedStudents = (students || []).map((student: any) => ({
       email: student.email,
       name_kanji: student.name_kanji,
@@ -115,6 +116,7 @@ export const handler = async (
       remarks: student.remarks,
       registration_date: student.created_at,
       last_attendance_date: student.last_attendance_date || null,
+      is_active: student.is_active === 1,
     }));
 
     return successResponse({

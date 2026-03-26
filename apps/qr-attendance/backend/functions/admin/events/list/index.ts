@@ -4,7 +4,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
@@ -40,9 +40,7 @@ export const handler = async (
       offset = 0;
     }
 
-    // データベース接続を初期化
-    await initDBFromSecrets();
-    const db = getDB();
+    const pool = getDB();
 
     // イベント一覧取得
     let query = 'SELECT * FROM events WHERE 1=1';
@@ -60,23 +58,24 @@ export const handler = async (
 
     query += ` ORDER BY event_date DESC LIMIT ${limit} OFFSET ${offset}`;
 
-    const [events] = await db.execute(query, params) as any[];
+    const [events, countResult] = await withConnection(pool, async (conn) => {
+      const [ev] = (await conn.execute(query, params)) as any[];
+      let countQuery = 'SELECT COUNT(*) as total FROM events WHERE 1=1';
+      const countParams: any[] = [];
 
-    // 総件数を取得
-    let countQuery = 'SELECT COUNT(*) as total FROM events WHERE 1=1';
-    const countParams: any[] = [];
+      if (startDate) {
+        countQuery += ' AND event_date >= ?';
+        countParams.push(startDate);
+      }
 
-    if (startDate) {
-      countQuery += ' AND event_date >= ?';
-      countParams.push(startDate);
-    }
+      if (endDate) {
+        countQuery += ' AND event_date <= ?';
+        countParams.push(endDate);
+      }
 
-    if (endDate) {
-      countQuery += ' AND event_date <= ?';
-      countParams.push(endDate);
-    }
-
-    const [countResult] = await db.execute(countQuery, countParams) as any[];
+      const [cnt] = (await conn.execute(countQuery, countParams)) as any[];
+      return [ev, cnt] as const;
+    });
     const total = countResult[0]?.total || 0;
 
     return successResponse({

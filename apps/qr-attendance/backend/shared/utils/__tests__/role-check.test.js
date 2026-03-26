@@ -43,4 +43,3 @@ describe('role-check', () => {
         });
     });
 });
-//# sourceMappingURL=role-check.test.js.map

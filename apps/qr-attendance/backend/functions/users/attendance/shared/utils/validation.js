@@ -18,4 +18,3 @@ function validatePassword(password) {
 function validateRequiredStrings(fields) {
     return Object.values(fields).every((v) => v != null && String(v).trim() !== '');
 }
-//# sourceMappingURL=validation.js.map

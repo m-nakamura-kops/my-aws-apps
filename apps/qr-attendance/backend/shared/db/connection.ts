@@ -4,8 +4,24 @@
  */
 
 import mysql from 'mysql2/promise';
+import type { Pool, PoolConnection } from 'mysql2/promise';
+
+/** Lambda から mysql2 の型を1経路に揃える（ネストした node_modules で Pool 型が二重化されるのを防ぐ） */
+export type { Pool, PoolConnection };
 
 let pool: mysql.Pool | null = null;
+
+/**
+ * プールから接続を1本取得し、必ず release する（全 Lambda 共通・リーク防止）
+ */
+export async function withConnection<T>(pool: Pool, fn: (conn: PoolConnection) => Promise<T>): Promise<T> {
+  const conn = await pool.getConnection();
+  try {
+    return await fn(conn);
+  } finally {
+    conn.release();
+  }
+}
 
 export interface DBConfig {
   host: string;
@@ -24,17 +40,28 @@ export function initDB(config: DBConfig): mysql.Pool {
     return pool;
   }
 
-  pool = mysql.createPool({
+  // Lambda 1 実行あたりの同時接続を抑え、RDS の max_connections を枯渇させない
+  const rawLimit = parseInt(process.env.CONNECTION_LIMIT || '5', 10);
+  const connectionLimit = Number.isNaN(rawLimit)
+    ? 5
+    : Math.min(Math.max(1, rawLimit), 5);
+
+  const poolConfig = {
     host: config.host,
     port: config.port,
     user: config.user,
     password: config.password,
     database: config.database,
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit,
     queueLimit: 0,
+    idleTimeout: 60000,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
     ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
-  });
+  };
+
+  pool = mysql.createPool(poolConfig);
 
   return pool;
 }

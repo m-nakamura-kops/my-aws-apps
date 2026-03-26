@@ -56,8 +56,8 @@ function getUserEmailFromRequest(event) {
  * ユーザーのrole_flagを取得
  */
 async function getUserRoleFlag(email) {
-    const db = (0, connection_1.getDB)();
-    const [users] = await db.execute('SELECT role_flag FROM users WHERE email = ?', [email]);
+    const pool = (0, connection_1.getDB)();
+    const [users] = (await (0, connection_1.withConnection)(pool, async (conn) => conn.execute('SELECT role_flag FROM users WHERE email = ?', [email])));
     if (users.length === 0) {
         return null;
     }

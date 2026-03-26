@@ -34,9 +34,7 @@ const handler = async (event) => {
         if (isNaN(offset) || offset < 0) {
             offset = 0;
         }
-        // データベース接続を初期化
-        await (0, secrets_1.initDBFromSecrets)();
-        const db = (0, connection_1.getDB)();
+        const pool = (0, connection_1.getDB)();
         // イベント一覧取得
         let query = 'SELECT * FROM events WHERE 1=1';
         const params = [];
@@ -49,19 +47,21 @@ const handler = async (event) => {
             params.push(endDate);
         }
         query += ` ORDER BY event_date DESC LIMIT ${limit} OFFSET ${offset}`;
-        const [events] = await db.execute(query, params);
-        // 総件数を取得
-        let countQuery = 'SELECT COUNT(*) as total FROM events WHERE 1=1';
-        const countParams = [];
-        if (startDate) {
-            countQuery += ' AND event_date >= ?';
-            countParams.push(startDate);
-        }
-        if (endDate) {
-            countQuery += ' AND event_date <= ?';
-            countParams.push(endDate);
-        }
-        const [countResult] = await db.execute(countQuery, countParams);
+        const [events, countResult] = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [ev] = (await conn.execute(query, params));
+            let countQuery = 'SELECT COUNT(*) as total FROM events WHERE 1=1';
+            const countParams = [];
+            if (startDate) {
+                countQuery += ' AND event_date >= ?';
+                countParams.push(startDate);
+            }
+            if (endDate) {
+                countQuery += ' AND event_date <= ?';
+                countParams.push(endDate);
+            }
+            const [cnt] = (await conn.execute(countQuery, countParams));
+            return [ev, cnt];
+        });
         const total = countResult[0]?.total || 0;
         return (0, response_1.successResponse)({
             events: events || [],

@@ -42,6 +42,8 @@ const handler = async (event) => {
         if (isNaN(eventIdNum) || eventIdNum < 1) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Invalid event_id', 400);
         }
+        const actionParam = (body.action || body.type || 'entry').toString().toLowerCase();
+        const isExit = actionParam === 'exit' || actionParam === 'out';
         const db = (0, connection_1.getDB)();
         const [events] = await db.execute('SELECT event_id FROM events WHERE event_id = ?', [eventIdNum]);
         if (events.length === 0) {
@@ -54,17 +56,32 @@ const handler = async (event) => {
         if (users[0].role_flag !== role_check_1.UserRole.USER) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Target user must be a student (role_flag=1)', 400);
         }
-        const [existing] = await db.execute('SELECT log_id FROM attendance_logs WHERE event_id = ? AND email = ? LIMIT 1', [eventIdNum, email]);
-        if (existing.length > 0) {
+        const [existingEntry] = await db.execute("SELECT log_id FROM attendance_logs WHERE event_id = ? AND email = ? AND type = 'entry' LIMIT 1", [eventIdNum, email]);
+        const [existingExit] = await db.execute("SELECT log_id FROM attendance_logs WHERE event_id = ? AND email = ? AND type = 'exit' LIMIT 1", [eventIdNum, email]);
+        if (isExit) {
+            if (existingExit.length > 0) {
+                return (0, response_1.errorResponse)('CONFLICT', 'Already checked out for this event', 409);
+            }
+            try {
+                const [result] = await db.execute(`INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email, notes) VALUES (?, ?, ?, NULL, NOW(), ?, ?)`, [email, eventIdNum, 'exit', staffEmail, NOTES_MANUAL]);
+                const logId = result?.insertId ?? null;
+                return (0, response_1.successResponse)({ log_id: logId, event_id: eventIdNum, email, action: 'exit', message: 'Manual exit recorded' }, 201);
+            } catch (insertErr) {
+                const code = insertErr?.code ?? insertErr?.errno;
+                if (code === 'ER_DUP_ENTRY' || code === 1062) {
+                    return (0, response_1.errorResponse)('CONFLICT', 'Already checked out for this event', 409);
+                }
+                throw insertErr;
+            }
+        }
+        if (existingEntry.length > 0) {
             return (0, response_1.errorResponse)('CONFLICT', 'Already checked in for this event', 409);
         }
         try {
-            const [result] = await db.execute(`INSERT INTO attendance_logs (email, event_id, in_time, staff_email, notes)
-       VALUES (?, ?, NOW(), ?, ?)`, [email, eventIdNum, staffEmail, NOTES_MANUAL]);
+            const [result] = await db.execute(`INSERT INTO attendance_logs (email, event_id, type, in_time, staff_email, notes) VALUES (?, ?, ?, NOW(), ?, ?)`, [email, eventIdNum, 'entry', staffEmail, NOTES_MANUAL]);
             const logId = result?.insertId ?? null;
-            return (0, response_1.successResponse)({ log_id: logId, event_id: eventIdNum, email, message: 'Manual attendance recorded' }, 201);
-        }
-        catch (insertErr) {
+            return (0, response_1.successResponse)({ log_id: logId, event_id: eventIdNum, email, action: 'entry', message: 'Manual attendance recorded' }, 201);
+        } catch (insertErr) {
             const code = insertErr?.code ?? insertErr?.errno;
             if (code === 'ER_DUP_ENTRY' || code === 1062) {
                 return (0, response_1.errorResponse)('CONFLICT', 'Already checked in for this event', 409);

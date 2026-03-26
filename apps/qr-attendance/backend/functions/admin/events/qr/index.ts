@@ -4,7 +4,7 @@
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { getDB } from '../../../../shared/db/connection';
+import { getDB, withConnection } from '../../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../../shared/utils/response';
 import { checkAdminPermission } from '../../../../shared/utils/auth';
@@ -32,20 +32,19 @@ export const handler = async (
       return errorResponse('BAD_REQUEST', 'eventId is required', 400);
     }
 
-    // データベース接続を取得（既に初期化済み）
-    const db = getDB();
+    const pool = getDB();
 
-    // イベントの存在確認
-    const [events] = await db.execute(
-      'SELECT * FROM events WHERE event_id = ?',
-      [eventId]
-    ) as any[];
+    const eventData = await withConnection(pool, async (conn) => {
+      const [events] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId])) as any[];
+      if (events.length === 0) {
+        return null;
+      }
+      return events[0];
+    });
 
-    if (events.length === 0) {
+    if (!eventData) {
       return errorResponse('NOT_FOUND', 'Event not found', 404);
     }
-
-    const eventData = events[0];
 
     // QRコードデータを生成（イベントIDとシークレットキーを含む）
     // 本番環境では、より安全な方法でシークレットを管理する必要があります

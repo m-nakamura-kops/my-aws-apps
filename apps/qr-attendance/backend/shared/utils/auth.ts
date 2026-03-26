@@ -3,7 +3,7 @@
  */
 
 import { APIGatewayProxyEvent } from 'aws-lambda';
-import { getDB } from '../db/connection';
+import { getDB, withConnection } from '../db/connection';
 import { isAdmin, isStaffOrAdmin } from './role-check';
 
 /** 権限チェック結果（成功） */
@@ -70,11 +70,10 @@ export function getUserEmailFromRequest(event: APIGatewayProxyEvent): string | n
  * ユーザーのrole_flagを取得
  */
 export async function getUserRoleFlag(email: string): Promise<number | null> {
-  const db = getDB();
-  const [users] = await db.execute(
-    'SELECT role_flag FROM users WHERE email = ?',
-    [email]
-  ) as any[];
+  const pool = getDB();
+  const [users] = (await withConnection(pool, async (conn) =>
+    conn.execute('SELECT role_flag FROM users WHERE email = ?', [email])
+  )) as any[];
 
   if (users.length === 0) {
     return null;

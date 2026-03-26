@@ -1,5 +1,10 @@
 'use client';
 
+/**
+ * No.6.4.5 利用者：打刻履歴 (/history)
+ * 自分の出席記録一覧。GET /v1/users/attendance/history（本人のみ）。
+ */
+
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
@@ -146,7 +151,7 @@ export default function HistoryPage() {
             </p>
           </div>
           <Link
-            href="/"
+            href="/home"
             className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
           >
             ホームに戻る

@@ -21,6 +21,11 @@ const envConfig = {
   region,
 };
 
+const frontendLoginUrl =
+  (app.node.tryGetContext('frontendLoginUrl') as string | undefined) ||
+  process.env.FRONTEND_LOGIN_URL ||
+  'https://example.com/login';
+
 // RDSスタック
 const rdsStack = new QrAttendanceRdsStack(app, `QrAttendanceRdsStack-${env}`, {
   env: envConfig,
@@ -35,6 +40,7 @@ const rdsStack = new QrAttendanceRdsStack(app, `QrAttendanceRdsStack-${env}`, {
 const cognitoStack = new QrAttendanceCognitoStack(app, `QrAttendanceCognitoStack-${env}`, {
   env: envConfig,
   description: 'QRコード打刻システム - Cognito User Pool',
+  frontendLoginUrl,
   tags: {
     Project: 'qr-attendance',
     Environment: env,

@@ -20,12 +20,14 @@ CREATE TABLE users (
     tel VARCHAR(15) NOT NULL COMMENT '電話番号',
     org_id VARCHAR(20) NULL COMMENT '組織ID',
     role_flag INT NOT NULL COMMENT '役割フラグ: 1=利用者, 2=スタッフ等, 3=管理者',
+    is_active TINYINT NOT NULL DEFAULT 1 COMMENT '有効=1, 退会=0。0の場合はログイン・新規申込不可',
     remarks TEXT NULL COMMENT '備考',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
     PRIMARY KEY (email),
     INDEX idx_org_id (org_id),
-    INDEX idx_role_flag (role_flag)
+    INDEX idx_role_flag (role_flag),
+    INDEX idx_is_active (is_active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='ユーザーテーブル';
 
 -- ============================================
@@ -90,6 +92,8 @@ CREATE TABLE news (
     id INT NOT NULL AUTO_INCREMENT COMMENT 'お知らせID',
     title VARCHAR(255) NOT NULL COMMENT 'お知らせの見出し',
     content TEXT NOT NULL COMMENT 'お知らせの詳細内容',
+    is_published TINYINT NOT NULL DEFAULT 1 COMMENT '1=公開 0=非公開',
+    announcement_type TINYINT NOT NULL DEFAULT 1 COMMENT '1=通常 2=重要（緊急）',
     published_at DATETIME NOT NULL COMMENT '掲載開始日時',
     expired_at DATETIME NULL COMMENT '掲載終了日時（NULLは無期限）',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',

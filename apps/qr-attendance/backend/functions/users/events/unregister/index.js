@@ -9,17 +9,14 @@ const connection_1 = require('./shared/db/connection');
 const secrets_1 = require('./shared/db/secrets');
 const response_1 = require('./shared/utils/response');
 const handler = async (event) => {
-    // CORSプリフライトリクエスト対応
     if (event.httpMethod === 'OPTIONS') {
         return (0, response_1.corsResponse)();
     }
     try {
-        // パスパラメータからeventIdを取得
         const eventId = event.pathParameters?.eventId;
         if (!eventId) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'eventId is required', 400);
         }
-        // クエリパラメータまたはリクエストボディからemailを取得
         let email;
         if (event.queryStringParameters?.email) {
             email = event.queryStringParameters.email;
@@ -31,21 +28,26 @@ const handler = async (event) => {
         if (!email) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'email is required', 400);
         }
-        // データベース接続を初期化
         await (0, secrets_1.initDBFromSecrets)();
-        const db = (0, connection_1.getDB)();
-        // イベントの存在確認
-        const [events] = await db.execute('SELECT * FROM events WHERE event_id = ?', [eventId]);
-        if (events.length === 0) {
+        const pool = (0, connection_1.getDB)();
+        const outcome = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [events] = (await conn.execute('SELECT * FROM events WHERE event_id = ?', [eventId]));
+            if (events.length === 0) {
+                return { kind: 'no_event' };
+            }
+            const [registrations] = (await conn.execute('SELECT * FROM registrations WHERE email = ? AND event_id = ?', [email, eventId]));
+            if (registrations.length === 0) {
+                return { kind: 'no_reg' };
+            }
+            await conn.execute('DELETE FROM registrations WHERE email = ? AND event_id = ?', [email, eventId]);
+            return { kind: 'ok' };
+        });
+        if (outcome.kind === 'no_event') {
             return (0, response_1.errorResponse)('NOT_FOUND', 'Event not found', 404);
         }
-        // 申込の存在確認
-        const [registrations] = await db.execute('SELECT * FROM registrations WHERE email = ? AND event_id = ?', [email, eventId]);
-        if (registrations.length === 0) {
+        if (outcome.kind === 'no_reg') {
             return (0, response_1.errorResponse)('NOT_FOUND', 'Registration not found', 404);
         }
-        // 参加申込を削除
-        await db.execute('DELETE FROM registrations WHERE email = ? AND event_id = ?', [email, eventId]);
         return (0, response_1.successResponse)({
             message: '参加申込を取消しました',
             email,

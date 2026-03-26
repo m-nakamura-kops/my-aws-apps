@@ -1,7 +1,8 @@
 "use strict";
 /**
- * 申込一覧取得 GET /v1/users/registrations
- * 管理者: email 未指定で全利用者の申込一覧。一般: 自分の申込のみ（email 必須・本人のみ）
+ * 申込一覧取得Lambda関数
+ * GET /v1/users/registrations
+ * 管理者: email 未指定で全利用者の申込一覧。一般: 自分の申込のみ（email 未指定時は認証ユーザーで絞る）
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
@@ -20,29 +21,24 @@ const handler = async (event) => {
         const eventId = queryParams.event_id;
         let limit = queryParams.limit ? parseInt(queryParams.limit, 10) : 100;
         let offset = queryParams.offset ? parseInt(queryParams.offset, 10) : 0;
-        if (isNaN(limit) || limit < 1 || limit > 1000) limit = 100;
-        if (isNaN(offset) || offset < 0) offset = 0;
-
+        if (isNaN(limit) || limit < 1 || limit > 1000)
+            limit = 100;
+        if (isNaN(offset) || offset < 0)
+            offset = 0;
         await (0, secrets_1.initDBFromSecrets)();
-        const db = (0, connection_1.getDB)();
-
+        const pool = (0, connection_1.getDB)();
         const requestEmail = (0, auth_1.getUserEmailFromRequest)(event);
         if (!requestEmail) {
             return (0, response_1.errorResponse)('UNAUTHORIZED', 'Authentication required', 401);
         }
         const roleFlag = await (0, auth_1.getUserRoleFlag)(requestEmail);
-        const isAdmin = (0, role_check_1.isAdmin)(roleFlag);
-
-        if (!isAdmin) {
-            if (!filterEmail) {
-                return (0, response_1.errorResponse)('BAD_REQUEST', 'email parameter is required', 400);
-            }
-            if (filterEmail !== requestEmail) {
+        const isAdminUser = (0, role_check_1.isAdmin)(roleFlag);
+        if (!isAdminUser) {
+            if (filterEmail != null && filterEmail !== '' && filterEmail !== requestEmail) {
                 return (0, response_1.errorResponse)('FORBIDDEN', 'You can only view your own registrations', 403);
             }
         }
-
-        const emailFilter = isAdmin ? filterEmail : requestEmail;
+        const emailFilter = isAdminUser ? filterEmail : requestEmail;
         const params = [];
         let whereClause = '';
         if (emailFilter) {
@@ -53,11 +49,9 @@ const handler = async (event) => {
             whereClause += whereClause ? ' AND r.event_id = ?' : ' WHERE r.event_id = ?';
             params.push(eventId);
         }
-
         const limitInt = Math.min(1000, Math.max(1, limit));
         const offsetInt = Math.max(0, offset);
-
-        let query = `
+        const query = `
       SELECT 
         r.reg_id,
         r.email,
@@ -73,12 +67,13 @@ const handler = async (event) => {
       INNER JOIN events e ON r.event_id = e.event_id
       ${whereClause}
       ORDER BY r.created_at DESC LIMIT ${limitInt} OFFSET ${offsetInt}`;
-        const [registrations] = await db.execute(query, params);
-
-        let countQuery = `SELECT COUNT(*) as total FROM registrations r ${whereClause}`;
-        const [countResult] = await db.execute(countQuery, params);
+        const [registrations, countResult] = await (0, connection_1.withConnection)(pool, async (conn) => {
+            const [regs] = (await conn.execute(query, params));
+            const countQuery = `SELECT COUNT(*) as total FROM registrations r ${whereClause}`;
+            const [cnt] = (await conn.execute(countQuery, params));
+            return [regs, cnt];
+        });
         const total = countResult[0]?.total || 0;
-
         return (0, response_1.successResponse)({
             registrations: registrations.map((reg) => ({
                 reg_id: reg.reg_id,

@@ -11,9 +11,10 @@
     "postbuild": "mv ../../../shared/db/connection.ts.bak ../../../shared/db/connection.ts 2>/dev/null || true && mv ../../../shared/db/secrets.ts.bak ../../../shared/db/secrets.ts 2>/dev/null || true && mv ../../../shared/utils/response.ts.bak ../../../shared/utils/response.ts 2>/dev/null || true"
   },
   "dependencies": {
-    "mysql2": "^3.6.5",
+    "@aws-sdk/client-cognito-identity-provider": "^3.490.0",
     "@aws-sdk/client-secrets-manager": "^3.490.0",
-    "@aws-sdk/client-cognito-identity-provider": "^3.490.0"
+    "dayjs": "^1.11.20",
+    "mysql2": "^3.6.5"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.130",
