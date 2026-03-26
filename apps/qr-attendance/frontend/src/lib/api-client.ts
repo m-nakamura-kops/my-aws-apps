@@ -553,12 +553,14 @@ export class ApiClient {
         total_attendees: number;
         attendance_rate: number;
         no_show_count: number;
+        /** 時間帯集計と一致する入室（entry）打刻件数の合計 */
+        entry_punch_count?: number;
       };
       attendance_logs: Array<{
         log_id: number;
         email: string;
         user_name: string;
-        in_time: string;
+        in_time: string | null;
         out_time: string | null;
         stay_minutes: number | null;
         staff_email: string;
@@ -569,6 +571,8 @@ export class ApiClient {
           time_slot: string;
           count: number;
         }>;
+        /** バー幅の基準（各スロット人数の最大値） */
+        time_slot_max_count?: number;
         stay_duration: {
           avg_minutes: number | null;
           min_minutes: number | null;

@@ -20,11 +20,20 @@ interface AttendanceLog {
   log_id: number;
   email: string;
   user_name: string;
-  in_time: string;
+  in_time: string | null;
   out_time: string | null;
   stay_minutes: number | null;
   staff_email: string;
   staff_name: string;
+}
+
+function isPresentTime(v: string | null | undefined): boolean {
+  if (v == null) return false;
+  const s = String(v).trim();
+  if (s === '' || s === 'null' || s.startsWith('0000-00-00')) return false;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime()) || d.getFullYear() < 1980) return false;
+  return true;
 }
 
 /** 出席率表示用：小数点第1位まで。申込0の場合は 0% を表示（0除算ガード） */
@@ -96,8 +105,9 @@ function EventAttendanceReportPageContent() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!isPresentTime(dateString ?? null)) return '-';
+    const date = new Date(String(dateString).trim());
     return date.toLocaleString('ja-JP', {
       year: 'numeric',
       month: '2-digit',
@@ -107,10 +117,11 @@ function EventAttendanceReportPageContent() {
     });
   };
 
-  const formatDuration = (minutes: number | null) => {
-    if (minutes === null) return '-';
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
+  const formatDuration = (minutes: number | null | undefined) => {
+    if (minutes == null || !Number.isFinite(minutes) || Number.isNaN(minutes) || minutes < 0) return '-';
+    const m = Math.round(minutes);
+    const hours = Math.floor(m / 60);
+    const mins = m % 60;
     if (hours > 0) return `${hours}時間${mins}分`;
     return `${mins}分`;
   };
@@ -135,7 +146,11 @@ function EventAttendanceReportPageContent() {
   if (!report) return null;
 
   const summary = report.summary || {};
-  const totalAttendeesForBar = summary.total_attendees || 0;
+  const stats = report.statistics || {};
+  const barDenominator =
+    typeof stats.time_slot_max_count === 'number' && stats.time_slot_max_count > 0
+      ? stats.time_slot_max_count
+      : 1;
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
@@ -151,7 +166,9 @@ function EventAttendanceReportPageContent() {
           <h1 className="text-3xl font-bold text-gray-900">出席レポート</h1>
           <p className="text-lg text-gray-600 mt-2">{report.event_name}</p>
           <p className="text-sm text-gray-500">
-            {new Date(report.event_date).toLocaleString('ja-JP')}
+            {isPresentTime(report.event_date)
+              ? new Date(report.event_date).toLocaleString('ja-JP')
+              : report.event_date || '-'}
             {report.location && ` @ ${report.location}`}
           </p>
         </div>
@@ -233,20 +250,20 @@ function EventAttendanceReportPageContent() {
 
         {/* 時間帯別入室数（0除算ガード） */}
         {(report.statistics?.time_slot_distribution?.length ?? 0) > 0 && (
-          <div className="bg-white shadow rounded-lg p-6 mb-6">
+          <div className="bg-white shadow rounded-lg p-6 mb-6 w-full max-w-full overflow-x-auto">
             <h2 className="text-xl font-semibold mb-4">時間帯別入室数</h2>
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0 w-full">
               {report.statistics.time_slot_distribution.map((stat: any) => (
-                <div key={stat.time_slot} className="flex items-center">
-                  <div className="w-20 text-sm text-gray-600">{stat.time_slot}</div>
-                  <div className="flex-1 bg-gray-200 rounded-full h-6 relative">
+                <div key={stat.time_slot} className="flex items-center gap-2 min-w-0 w-full">
+                  <div className="w-20 shrink-0 text-sm text-gray-600">{stat.time_slot}</div>
+                  <div className="flex-1 min-w-0 bg-gray-200 rounded-full h-6 relative overflow-hidden">
                     <div
-                      className="bg-indigo-600 h-6 rounded-full flex items-center justify-end pr-2 min-w-0"
+                      className="bg-indigo-600 h-6 rounded-full flex items-center justify-end pr-2 max-w-full"
                       style={{
-                        width: totalAttendeesForBar > 0 ? `${(stat.count / totalAttendeesForBar) * 100}%` : '0%',
+                        width: `${Math.min(100, (Number(stat.count) || 0) / barDenominator * 100)}%`,
                       }}
                     >
-                      <span className="text-xs text-white font-medium">{stat.count}人</span>
+                      <span className="text-xs text-white font-medium truncate">{stat.count}人</span>
                     </div>
                   </div>
                 </div>
@@ -283,7 +300,7 @@ function EventAttendanceReportPageContent() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{log.user_name}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{log.email}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDate(log.in_time)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{log.out_time ? formatDate(log.out_time) : '-'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDate(log.out_time)}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDuration(log.stay_minutes)}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           <div>{log.staff_name}</div>
@@ -301,7 +318,7 @@ function EventAttendanceReportPageContent() {
                     <div className="font-medium text-gray-900">{log.user_name}</div>
                     <div className="text-sm text-gray-500">{log.email}</div>
                     <div className="text-sm text-gray-600 mt-1">
-                      入室: {formatDate(log.in_time)} / 退室: {log.out_time ? formatDate(log.out_time) : '-'}
+                      入室: {formatDate(log.in_time)} / 退室: {formatDate(log.out_time)}
                     </div>
                     <div className="text-xs text-gray-500 mt-0.5">滞在: {formatDuration(log.stay_minutes)} · 担当: {log.staff_name}</div>
                   </div>

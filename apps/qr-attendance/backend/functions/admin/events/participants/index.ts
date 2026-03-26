@@ -10,6 +10,30 @@ import { successResponse, errorResponse, corsResponse } from '../../../../shared
 import { checkStaffOrAdminPermission } from '../../../../shared/utils/auth';
 import { isStaffOrAdmin } from '../../../../shared/utils/role-check';
 
+function isInvalidDatetime(v: unknown): boolean {
+  if (v == null || v === '') return true;
+  if (v instanceof Date) {
+    const ms = v.getTime();
+    if (Number.isNaN(ms)) return true;
+    if (v.getFullYear() < 1980) return true;
+    return false;
+  }
+  const s = String(v).trim();
+  if (s === '' || s === 'null' || s.startsWith('0000-00-00')) return true;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return true;
+  if (d.getFullYear() < 1980) return true;
+  return false;
+}
+
+function toIsoOrNull(v: unknown): string | null {
+  if (isInvalidDatetime(v)) return null;
+  if (v instanceof Date) return v.toISOString();
+  const d = new Date(String(v).trim());
+  if (Number.isNaN(d.getTime()) || d.getFullYear() < 1980) return null;
+  return d.toISOString();
+}
+
 export const handler = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
@@ -51,59 +75,77 @@ export const handler = async (
       }
       const eventData = events[0];
 
-      let participants: any[];
+      let rows: any[];
       let total: number;
+
       if (canViewAll) {
-        const [rows] = (await conn.execute(
+        const [r] = (await conn.execute(
           `SELECT 
-          email,
-          name_kanji,
-          name_kana,
-          registration_date
-        FROM v_event_participants
-        WHERE event_id = ?
-        ORDER BY registration_date DESC
-        LIMIT ${limit} OFFSET ${offset}`,
-          [eventId]
+            vp.email,
+            vp.name_kanji,
+            vp.name_kana,
+            vp.registration_date,
+            u.tel,
+            u.org_id,
+            u.role_flag,
+            (SELECT al.in_time FROM attendance_logs al
+              WHERE al.event_id = vp.event_id AND al.email = vp.email
+                AND al.in_time IS NOT NULL
+              ORDER BY al.log_id DESC LIMIT 1) AS in_time,
+            (SELECT MAX(al.out_time) FROM attendance_logs al
+              WHERE al.event_id = vp.event_id AND al.email = vp.email
+                AND al.out_time IS NOT NULL) AS out_time
+          FROM v_event_participants vp
+          INNER JOIN users u ON u.email = vp.email
+          WHERE vp.event_id = ?
+          ORDER BY vp.registration_date DESC
+          LIMIT ? OFFSET ?`,
+          [eventId, limit, offset]
         )) as any[];
-        participants = rows || [];
+        rows = r || [];
         const [countResult] = (await conn.execute(
           'SELECT COUNT(*) as total FROM v_event_participants WHERE event_id = ?',
           [eventId]
         )) as any[];
         total = countResult[0]?.total || 0;
       } else {
-        const [rows] = (await conn.execute(
+        const [r] = (await conn.execute(
           `SELECT 
-          email,
-          name_kanji,
-          name_kana,
-          registration_date
-        FROM v_event_participants
-        WHERE event_id = ? AND email = ?
-        LIMIT 1`,
+            vp.email,
+            vp.name_kanji,
+            vp.name_kana,
+            vp.registration_date,
+            u.tel,
+            u.org_id,
+            u.role_flag,
+            (SELECT al.in_time FROM attendance_logs al
+              WHERE al.event_id = vp.event_id AND al.email = vp.email
+                AND al.in_time IS NOT NULL
+              ORDER BY al.log_id DESC LIMIT 1) AS in_time,
+            (SELECT MAX(al.out_time) FROM attendance_logs al
+              WHERE al.event_id = vp.event_id AND al.email = vp.email
+                AND al.out_time IS NOT NULL) AS out_time
+          FROM v_event_participants vp
+          INNER JOIN users u ON u.email = vp.email
+          WHERE vp.event_id = ? AND vp.email = ?
+          LIMIT 1`,
           [eventId, requestEmail]
         )) as any[];
-        participants = rows || [];
-        total = participants.length;
+        rows = r || [];
+        total = rows.length;
       }
 
-      const participantsWithDetails = [];
-      for (const participant of participants) {
-        const [users] = (await conn.execute(
-          'SELECT tel, org_id, role_flag FROM users WHERE email = ?',
-          [participant.email]
-        )) as any[];
-        participantsWithDetails.push({
-          email: participant.email,
-          name_kanji: participant.name_kanji,
-          name_kana: participant.name_kana,
-          tel: users[0]?.tel || null,
-          org_id: users[0]?.org_id || null,
-          role_flag: users[0]?.role_flag || null,
-          registration_date: participant.registration_date,
-        });
-      }
+      const participantsWithDetails = rows.map((row) => ({
+        email: row.email,
+        name_kanji: row.name_kanji,
+        name_kana: row.name_kana,
+        tel: row.tel ?? null,
+        org_id: row.org_id ?? null,
+        role_flag: row.role_flag ?? null,
+        registration_date: row.registration_date,
+        in_time: toIsoOrNull(row.in_time),
+        out_time: toIsoOrNull(row.out_time),
+      }));
 
       return {
         notFound: false as const,

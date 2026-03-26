@@ -88,7 +88,7 @@ export const handler = async (
       await conn.execute('DELETE FROM attendance_logs WHERE staff_email = ?', [email]);
       await conn.execute('DELETE FROM users WHERE email = ?', [email]);
 
-      return { err: null as const };
+      return { err: null };
     });
 
     if (outcome.err === 'not_found') {

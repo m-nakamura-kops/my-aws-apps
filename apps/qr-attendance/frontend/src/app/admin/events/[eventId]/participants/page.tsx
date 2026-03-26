@@ -27,6 +27,15 @@ interface Participant {
   out_time: string | null;
 }
 
+function isPresentTime(v: string | null | undefined): boolean {
+  if (v == null) return false;
+  const s = String(v).trim();
+  if (s === '' || s === 'null' || s.startsWith('0000-00-00')) return false;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime()) || d.getFullYear() < 1980) return false;
+  return true;
+}
+
 function EventParticipantsPageContent() {
   const params = useParams();
   const router = useRouter();
@@ -86,13 +95,14 @@ function EventParticipantsPageContent() {
       list = list.filter((p) => (p.name_kana || '').toLowerCase().includes(q));
     }
     if (showOnlyUnchecked) {
-      list = list.filter((p) => p.in_time == null || p.in_time === '');
+      list = list.filter((p) => !isPresentTime(p.in_time) && !isPresentTime(p.out_time));
     }
     return list;
   }, [participants, searchKana, showOnlyUnchecked]);
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('ja-JP', {
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!isPresentTime(dateString ?? null)) return '-';
+    return new Date(String(dateString).trim()).toLocaleString('ja-JP', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -101,8 +111,9 @@ function EventParticipantsPageContent() {
     });
   };
 
-  const formatTimeOnly = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString('ja-JP', {
+  const formatTimeOnly = (dateString: string | null | undefined) => {
+    if (!isPresentTime(dateString ?? null)) return '-';
+    return new Date(String(dateString).trim()).toLocaleTimeString('ja-JP', {
       hour: '2-digit',
       minute: '2-digit',
     });
@@ -152,7 +163,9 @@ function EventParticipantsPageContent() {
             {isUserOnly ? '自分の出欠確認' : '参加者一覧'}
           </h1>
           <p className="text-base text-gray-600 mt-1">{eventName}</p>
-          <p className="text-sm text-gray-500">{new Date(eventDate).toLocaleString('ja-JP')}</p>
+          <p className="text-sm text-gray-500">
+            {isPresentTime(eventDate) ? new Date(eventDate).toLocaleString('ja-JP') : eventDate || '-'}
+          </p>
         </div>
 
         {error && (
@@ -210,7 +223,10 @@ function EventParticipantsPageContent() {
         ) : (
           <div className="space-y-4">
             {filteredParticipants.map((p, index) => {
-              const hasPunched = p.in_time != null && p.in_time !== '';
+              const hasIn = isPresentTime(p.in_time);
+              const hasOut = isPresentTime(p.out_time);
+              const hasPunched = hasIn || hasOut;
+              const bothMissing = !hasIn && !hasOut;
               return (
                 <article
                   key={`${p.email}-${index}`}
@@ -220,13 +236,14 @@ function EventParticipantsPageContent() {
                 >
                   <div className="p-4 sm:p-5">
                     <div className={`text-sm font-semibold mb-2 ${hasPunched ? 'text-green-700' : 'text-orange-700'}`}>
-                      {hasPunched ? (
-                        <>
-                          ✓ 入室 {formatTimeOnly(p.in_time!)}
-                          {p.out_time && <>　退室 {formatTimeOnly(p.out_time)}</>}
-                        </>
-                      ) : (
+                      {bothMissing ? (
                         '未打刻'
+                      ) : (
+                        <>
+                          ✓{' '}
+                          {hasIn ? <>入室 {formatTimeOnly(p.in_time)}</> : <span className="text-gray-500">入室 —</span>}
+                          {hasOut ? <>　退室 {formatTimeOnly(p.out_time)}</> : <span className="text-gray-500">　退室 —</span>}
+                        </>
                       )}
                     </div>
                     <p className="text-base font-medium text-gray-900">
