@@ -1,7 +1,8 @@
 /**
  * 手動打刻実行
  * POST /v1/attendance/manual
- * 権限: 管理者(3) または スタッフ(2) のみ。event_id と email で打刻。二重打刻時は 409。
+ * 権限: 管理者(3) または スタッフ(2) のみ。event_id と email で打刻。
+ * 入室: type=entry。退室: type=exit（attendance_logs に notes カラムは使わない）。
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
@@ -11,10 +12,8 @@ import { successResponse, errorResponse, corsResponse } from '../../../shared/ut
 import { checkStaffOrAdminPermission } from '../../../shared/utils/auth';
 import { UserRole } from '../../../shared/utils/role-check';
 
-const NOTES_MANUAL = '手動打刻';
-
 type DbResult =
-  | { ok: true; logId: number | null }
+  | { ok: true; logId: number | null; action: 'entry' | 'exit' }
   | { ok: false; response: APIGatewayProxyResult };
 
 export const handler = async (
@@ -34,13 +33,23 @@ export const handler = async (
         permission.statusCode
       );
     }
-    const staffEmail = permission.email as string;
+    const staffEmail = String(permission.email ?? '').trim();
+    if (!staffEmail) {
+      return errorResponse('UNAUTHORIZED', 'Staff email missing from token', 401);
+    }
 
     if (!event.body) {
       return errorResponse('BAD_REQUEST', 'Request body is required', 400);
     }
 
-    let body: { event_id?: unknown; eventId?: unknown; email?: string; user_id?: string };
+    let body: {
+      event_id?: unknown;
+      eventId?: unknown;
+      email?: string;
+      user_id?: string;
+      action?: unknown;
+      type?: unknown;
+    };
     try {
       body = JSON.parse(event.body);
     } catch {
@@ -62,6 +71,9 @@ export const handler = async (
     if (isNaN(eventIdNum) || eventIdNum < 1) {
       return errorResponse('BAD_REQUEST', 'Invalid event_id', 400);
     }
+
+    const actionParam = (body.action ?? body.type ?? 'entry').toString().toLowerCase();
+    const isExit = actionParam === 'exit' || actionParam === 'out';
 
     const pool = getDB();
 
@@ -96,11 +108,44 @@ export const handler = async (
         };
       }
 
-      const [existing] = (await conn.execute(
-        'SELECT log_id FROM attendance_logs WHERE event_id = ? AND email = ? LIMIT 1',
+      const [existingEntry] = (await conn.execute(
+        `SELECT log_id FROM attendance_logs WHERE event_id = ? AND email = ? AND type = 'entry' LIMIT 1`,
         [eventIdNum, email]
       )) as any[];
-      if (existing.length > 0) {
+
+      const [existingExit] = (await conn.execute(
+        `SELECT log_id FROM attendance_logs WHERE event_id = ? AND email = ? AND type = 'exit' LIMIT 1`,
+        [eventIdNum, email]
+      )) as any[];
+
+      if (isExit) {
+        if (existingExit.length > 0) {
+          return {
+            ok: false,
+            response: errorResponse('CONFLICT', 'Already checked out for this event', 409),
+          };
+        }
+        try {
+          const [result] = (await conn.execute(
+            `INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
+             VALUES (?, ?, 'exit', NULL, NOW(), ?)`,
+            [email, eventIdNum, staffEmail]
+          )) as any[];
+          const logId = result?.insertId ?? null;
+          return { ok: true, logId, action: 'exit' };
+        } catch (insertErr: any) {
+          const code = insertErr?.code ?? insertErr?.errno;
+          if (code === 'ER_DUP_ENTRY' || code === 1062) {
+            return {
+              ok: false,
+              response: errorResponse('CONFLICT', 'Already checked out for this event', 409),
+            };
+          }
+          throw insertErr;
+        }
+      }
+
+      if (existingEntry.length > 0) {
         return {
           ok: false,
           response: errorResponse('CONFLICT', 'Already checked in for this event', 409),
@@ -109,12 +154,12 @@ export const handler = async (
 
       try {
         const [result] = (await conn.execute(
-          `INSERT INTO attendance_logs (email, event_id, in_time, staff_email, notes)
-           VALUES (?, ?, NOW(), ?, ?)`,
-          [email, eventIdNum, staffEmail, NOTES_MANUAL]
-        )) as any;
+          `INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
+           VALUES (?, ?, 'entry', NOW(), NULL, ?)`,
+          [email, eventIdNum, staffEmail]
+        )) as any[];
         const logId = result?.insertId ?? null;
-        return { ok: true, logId };
+        return { ok: true, logId, action: 'entry' };
       } catch (insertErr: any) {
         const code = insertErr?.code ?? insertErr?.errno;
         if (code === 'ER_DUP_ENTRY' || code === 1062) {
@@ -131,12 +176,16 @@ export const handler = async (
       return dbResult.response;
     }
 
+    const message =
+      dbResult.action === 'exit' ? 'Manual exit recorded' : 'Manual attendance recorded';
+
     return successResponse(
       {
         log_id: dbResult.logId,
         event_id: eventIdNum,
         email,
-        message: 'Manual attendance recorded',
+        action: dbResult.action,
+        message,
       },
       201
     );

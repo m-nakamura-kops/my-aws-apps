@@ -39,4 +39,3 @@ function isHeaderRow(cells) {
     const first = (cells[0] || '').toLowerCase().trim();
     return first === 'email' || first === 'メール' || first === 'mail';
 }
-//# sourceMappingURL=csv.js.map
