@@ -1,0 +1,37 @@
+<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
+  <!-- 背景 -->
+  <rect width="512" height="512" fill="#000000"/>
+  
+  <!-- テトリス風のブロックパターン -->
+  <!-- Iピース（シアン） -->
+  <rect x="100" y="150" width="60" height="60" fill="#00ffff" stroke="#00ffff" stroke-width="2"/>
+  <rect x="160" y="150" width="60" height="60" fill="#00ffff" stroke="#00ffff" stroke-width="2"/>
+  <rect x="220" y="150" width="60" height="60" fill="#00ffff" stroke="#00ffff" stroke-width="2"/>
+  <rect x="280" y="150" width="60" height="60" fill="#00ffff" stroke="#00ffff" stroke-width="2"/>
+  
+  <!-- Tピース（紫） -->
+  <rect x="200" y="250" width="60" height="60" fill="#a000f0" stroke="#a000f0" stroke-width="2"/>
+  <rect x="140" y="310" width="60" height="60" fill="#a000f0" stroke="#a000f0" stroke-width="2"/>
+  <rect x="200" y="310" width="60" height="60" fill="#a000f0" stroke="#a000f0" stroke-width="2"/>
+  <rect x="260" y="310" width="60" height="60" fill="#a000f0" stroke="#a000f0" stroke-width="2"/>
+  
+  <!-- Oピース（黄） -->
+  <rect x="350" y="250" width="60" height="60" fill="#ffff00" stroke="#ffff00" stroke-width="2"/>
+  <rect x="410" y="250" width="60" height="60" fill="#ffff00" stroke="#ffff00" stroke-width="2"/>
+  <rect x="350" y="310" width="60" height="60" fill="#ffff00" stroke="#ffff00" stroke-width="2"/>
+  <rect x="410" y="310" width="60" height="60" fill="#ffff00" stroke="#ffff00" stroke-width="2"/>
+  
+  <!-- ネオン効果 -->
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- タイトルテキスト（オプション） -->
+  <text x="256" y="450" font-family="Arial, sans-serif" font-size="80" font-weight="bold" fill="#00ffff" text-anchor="middle" filter="url(#glow)">T</text>
+</svg>

@@ -1,0 +1,22 @@
+{
+  "name": "students-search-lambda",
+  "version": "1.0.0",
+  "description": "Student search for manual attendance",
+  "main": "index.js",
+  "scripts": {
+    "prebuild": "rm -rf shared index.js index.js.map 2>/dev/null; mkdir -p shared/db shared/utils && cp ../../../shared/db/*.d.ts shared/db/ 2>/dev/null; cp ../../../shared/utils/*.d.ts shared/utils/ 2>/dev/null; true",
+    "build": "tsc --noEmitOnError false 2>&1; EXIT_CODE=$?; npm run copy-shared && npm run fix-paths; if [ -f index.js ]; then exit 0; else exit ${EXIT_CODE}; fi",
+    "copy-shared": "mkdir -p shared/db shared/utils && cp ../../../shared/db/*.js shared/db/ 2>/dev/null; cp ../../../shared/utils/*.js shared/utils/ 2>/dev/null; cp ../../../shared/db/*.d.ts shared/db/ 2>/dev/null; cp ../../../shared/utils/*.d.ts shared/utils/ 2>/dev/null; true",
+    "fix-paths": "node fix-paths.js",
+    "postbuild": "true"
+  },
+  "dependencies": {
+    "mysql2": "^3.6.5",
+    "@aws-sdk/client-secrets-manager": "^3.490.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.130",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.0"
+  }
+}

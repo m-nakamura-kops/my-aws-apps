@@ -1,0 +1,15 @@
+テーブル名,attendance_logs,出席ログテーブル（打刻履歴）
+説明,,QRコード打刻・手動打刻の履歴。同一イベント・同一利用者は1件のみ（二重打刻防止のためUNIQUE制約あり）
+,,,,,
+No,論理名,物理名,データ型,NULL,キー/制約,デフォルト,説明
+1,打刻ID,log_id,INT,NOT NULL,PRIMARY KEY AUTO_INCREMENT,,打刻ID
+2,メールアドレス,email,VARCHAR(255),NOT NULL,FK→users / UNIQUE(event_id,email),,打刻対象の利用者メール
+3,イベントID,event_id,INT,NOT NULL,FK→events / UNIQUE(event_id,email),,イベントID
+4,入室時刻,in_time,DATETIME,NOT NULL,,,入室打刻時刻
+5,退室時刻,out_time,DATETIME,NULL,,,退室打刻時刻（入室のみの場合はNULL）
+6,担当者メール,staff_email,VARCHAR(255),NOT NULL,FK→users,,打刻を実行したスタッフ等のメール
+7,備考,notes,VARCHAR(255),NULL,,,備考（手動打刻時は「手動打刻」を記録）
+8,作成日時,created_at,DATETIME,NULL,,CURRENT_TIMESTAMP,作成日時
+9,更新日時,updated_at,DATETIME,NULL,,CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,更新日時
+,,,,,
+制約,,,UNIQUE KEY uk_event_email (event_id, email),,,同一イベント・同一利用者の二重打刻をDB層で防止

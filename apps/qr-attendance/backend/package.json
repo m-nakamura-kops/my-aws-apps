@@ -1,0 +1,45 @@
+{
+  "name": "qr-attendance-backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "sync:response": "bash scripts/sync-response-to-lambdas.sh",
+    "build": "tsc",
+    "deploy": "npm run build && serverless deploy",
+    "test": "jest",
+    "lint": "eslint . --ext .ts",
+    "dev": "npx ts-node --project tsconfig.server.json local-server.ts",
+    "dev:watch": "nodemon --watch local-server.ts --exec npx ts-node --project tsconfig.server.json local-server.ts",
+    "create-admin": "node scripts/create-admin.js",
+    "seed-test-users": "node scripts/seed-test-users.js",
+    "verify-test-users": "node scripts/verify-test-users.js",
+    "reset-cognito-passwords": "node scripts/reset-cognito-passwords.js",
+    "force-create-cognito-users": "node scripts/force-create-cognito-users.js",
+    "integration-test": "node scripts/integration-test-checklist.js",
+    "smoke:student-delete-encoded-email": "node scripts/smoke-student-delete-encoded-email.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.500.0",
+    "@aws-sdk/client-rds-data": "^3.500.0",
+    "@aws-sdk/client-secrets-manager": "^3.500.0",
+    "mysql2": "^3.9.0",
+    "jsonwebtoken": "^9.0.2",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.0",
+    "@types/jsonwebtoken": "^9.0.0",
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "serverless": "^3.38.0",
+    "serverless-offline": "^13.3.0",
+    "typescript": "^5.3.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
+    "@types/jest": "^29.5.0",
+    "ts-node": "^10.9.2",
+    "nodemon": "^3.0.2"
+  }
+}

@@ -1,0 +1,250 @@
+# CloudFormationテンプレート - タスク管理アプリ
+# 
+# このテンプレートは以下のリソースを作成します:
+# - DynamoDBテーブル (Tasks)
+# - Lambda関数 (task-management-api)
+# - API Gateway REST API
+# - IAMロール
+# - CloudWatch Logs
+#
+# 使用方法:
+# aws cloudformation create-stack \
+#   --stack-name task-management-app \
+#   --template-body file://cloudformation-template.yaml \
+#   --parameters ParameterKey=Owner,ParameterValue=YourName \
+#                ParameterKey=Environment,ParameterValue=Dev
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Task Management App - Lambda, DynamoDB, API Gateway'
+
+Parameters:
+  Owner:
+    Type: String
+    Description: Owner name for tagging
+    Default: 'Nakamura'
+  
+  Environment:
+    Type: String
+    Description: Environment (Dev, Staging, Prod)
+    Default: 'Dev'
+    AllowedValues:
+      - Dev
+      - Staging
+      - Prod
+
+Resources:
+  # DynamoDBテーブル
+  TasksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Tasks
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: taskId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: taskId
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: TaskApp
+        - Key: Env
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # Lambda実行ロール
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: task-management-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt TasksTable.Arn
+      Tags:
+        - Key: Project
+          Value: TaskApp
+        - Key: Env
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # Lambda関数
+  TaskManagementFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: task-management-api
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: 'Please deploy the actual code' })
+            };
+          };
+      Environment:
+        Variables:
+          TASKS_TABLE_NAME: !Ref TasksTable
+          AWS_REGION: !Ref AWS::Region
+      Timeout: 30
+      MemorySize: 256
+      Tags:
+        - Key: Project
+          Value: TaskApp
+        - Key: Env
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # API Gateway REST API
+  TaskManagementAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: task-management-api
+      Description: Task Management REST API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Tags:
+        - Key: Project
+          Value: TaskApp
+        - Key: Env
+          Value: !Ref Environment
+        - Key: Owner
+          Value: !Ref Owner
+
+  # API Gateway リソース: /tasks
+  TasksResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref TaskManagementAPI
+      ParentId: !GetAtt TaskManagementAPI.RootResourceId
+      PathPart: tasks
+
+  # API Gateway リソース: /tasks/{taskId}
+  TaskResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref TaskManagementAPI
+      ParentId: !Ref TasksResource
+      PathPart: '{taskId}'
+
+  # API Gateway メソッド: POST /tasks
+  PostTasksMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TaskManagementAPI
+      ResourceId: !Ref TasksResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TaskManagementFunction.Arn}/invocations'
+
+  # API Gateway メソッド: GET /tasks
+  GetTasksMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TaskManagementAPI
+      ResourceId: !Ref TasksResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TaskManagementFunction.Arn}/invocations'
+
+  # API Gateway メソッド: PUT /tasks/{taskId}
+  PutTaskMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TaskManagementAPI
+      ResourceId: !Ref TaskResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TaskManagementFunction.Arn}/invocations'
+
+  # API Gateway メソッド: DELETE /tasks/{taskId}
+  DeleteTaskMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TaskManagementAPI
+      ResourceId: !Ref TaskResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TaskManagementFunction.Arn}/invocations'
+
+  # Lambda関数のAPI Gateway呼び出し権限
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TaskManagementFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TaskManagementAPI}/*/*'
+
+  # API Gateway デプロイメント
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PostTasksMethod
+      - GetTasksMethod
+      - PutTaskMethod
+      - DeleteTaskMethod
+    Properties:
+      RestApiId: !Ref TaskManagementAPI
+      StageName: prod
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${TaskManagementAPI}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+  
+  TasksTableName:
+    Description: DynamoDB table name
+    Value: !Ref TasksTable
+    Export:
+      Name: !Sub '${AWS::StackName}-TasksTableName'
+  
+  LambdaFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt TaskManagementFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunctionArn'
+

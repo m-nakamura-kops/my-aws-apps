@@ -1,0 +1,10 @@
+{
+  "name": "events-list-for-user-lambda",
+  "private": true,
+  "version": "1.0.0",
+  "description": "GET events for app (VPC Lambda asset — mysql2 + Secrets Manager)",
+  "dependencies": {
+    "mysql2": "^3.9.0",
+    "@aws-sdk/client-secrets-manager": "^3.500.0"
+  }
+}
