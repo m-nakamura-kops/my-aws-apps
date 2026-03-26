@@ -17,12 +17,22 @@ interface AttendanceLog {
   event_id: number;
   event_name: string;
   event_date: string;
-  in_time: string;
+  in_time: string | null;
   out_time: string | null;
   stay_minutes: number | null;
   staff_email: string;
   staff_name: string;
   created_at: string;
+}
+
+function isPresentTime(v: unknown): boolean {
+  if (v == null || v === '') return false;
+  if (typeof v === 'number' && v === 0) return false;
+  const s = String(v).trim();
+  if (s === '' || s === 'null' || s === '0' || s.startsWith('0000-00-00')) return false;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime()) || d.getFullYear() < 1980) return false;
+  return true;
 }
 
 function HistoryPageContent() {
@@ -89,8 +99,9 @@ function HistoryPageContent() {
     }
   };
 
-  const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString);
+  const formatDateTime = (dateString: string | null | undefined) => {
+    if (!isPresentTime(dateString)) return '-';
+    const date = new Date(String(dateString).trim());
     return date.toLocaleString('ja-JP', {
       year: 'numeric',
       month: '2-digit',
@@ -100,10 +111,11 @@ function HistoryPageContent() {
     });
   };
 
-  const formatDuration = (minutes: number | null) => {
-    if (minutes === null) return '-';
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
+  const formatDuration = (minutes: number | null | undefined) => {
+    if (minutes == null || !Number.isFinite(minutes) || Number.isNaN(minutes) || minutes < 0) return '-';
+    const m = Math.round(minutes);
+    const hours = Math.floor(m / 60);
+    const mins = m % 60;
     if (hours > 0) {
       return `${hours}時間${mins}分`;
     }
@@ -257,7 +269,7 @@ function HistoryPageContent() {
                           {formatDateTime(log.in_time)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {log.out_time ? formatDateTime(log.out_time) : <span className="text-gray-400">未退室</span>}
+                          {isPresentTime(log.out_time) ? formatDateTime(log.out_time) : '-'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {formatDuration(log.stay_minutes)}

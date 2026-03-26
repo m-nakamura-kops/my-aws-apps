@@ -139,26 +139,28 @@ function isOutTimeEmpty(out) {
     const s = String(out).trim();
     return s === '' || s === 'null' || s.startsWith('0000-00-00');
 }
-/**
- * 「この時点で退室処理が必要」= 最新行がまだ開いた入室状態
- * - 最新が exit → いいえ
- * - 最新が entry かつ out_time 未設定 → はい（006 + 履歴表示の両方に効く）
- * - レガシー（type 空）かつ out_time 未設定 → はい
- */
-function needsCheckout(latest) {
-    if (!latest)
-        return false;
-    const t = rowType(latest);
-    if (t === 'exit')
-        return false;
-    if (!isOutTimeEmpty(latest.out_time))
-        return false;
-    return t === 'entry' || t === '';
-}
 async function fetchLatestAttendanceRow(pool, userEmail, eventId) {
     return (0, connection_1.withConnection)(pool, async (conn) => {
         const [rows] = (await conn.execute('SELECT * FROM attendance_logs WHERE email = ? AND event_id = ? ORDER BY log_id DESC LIMIT 1', [userEmail, eventId]));
         return rows[0];
+    });
+}
+/**
+ * 当該イベント・ユーザーで「入室済み（in_time あり）かつ未退室（out_time NULL）」の行を1件取得。
+ * 最新行の type に依存せず、開いているセッションのみ退室対象とする（初回が退室になる誤判定を防ぐ）。
+ */
+async function fetchOpenSessionRow(pool, userEmail, eventId) {
+    return (0, connection_1.withConnection)(pool, async (conn) => {
+        const [rows] = (await conn.execute(`SELECT log_id, in_time FROM attendance_logs
+       WHERE email = ? AND event_id = ?
+         AND in_time IS NOT NULL
+         AND out_time IS NULL
+       ORDER BY log_id DESC
+       LIMIT 1`, [userEmail, eventId]));
+        const r = rows[0];
+        if (!r)
+            return null;
+        return { log_id: Number(r.log_id), in_time: r.in_time ?? null };
     });
 }
 async function ensureRegistrationForWalkIn(pool, userEmail, eventId) {
@@ -224,22 +226,21 @@ async function punchEntryExitToggle(pool, userEmail, eventId, staffEmail, retryD
     if (retryDepth > 5) {
         throw new Error('Attendance punch retry limit exceeded');
     }
-    const latest = await fetchLatestAttendanceRow(pool, userEmail, eventId);
-    const checkout = needsCheckout(latest);
+    const openSession = await fetchOpenSessionRow(pool, userEmail, eventId);
     const staffEmailBound = requireNonEmptyString(staffEmail, 'staff_email');
-    if (checkout && latest) {
-        const entryLogId = Number(latest.log_id);
-        const entryInTime = latest.in_time ?? null;
+    if (openSession) {
+        const entryLogId = openSession.log_id;
+        const entryInTime = openSession.in_time;
         const outTimeForDb = requireJstDatetimeForBind(nowJstMysqlDatetime(), 'out_time (checkout UPDATE)');
         const conn = await pool.getConnection();
         try {
             await conn.beginTransaction();
-            // プレースホルダ順: 1=out_time(DATETIME文字列), 2=staff_email, 3=log_id, 4=email, 5=event_id
+            // 開いているセッション行のみ更新（in_time 必須・out_time NULL を再確認）
             const [upd] = (await conn.execute(`UPDATE attendance_logs
          SET out_time = ?, staff_email = ?, updated_at = CURRENT_TIMESTAMP
          WHERE log_id = ? AND email = ? AND event_id = ?
-           AND (type = 'entry' OR type IS NULL OR type = '')
-           AND (out_time IS NULL)`, [outTimeForDb, staffEmailBound, entryLogId, userEmail, eventId]));
+           AND in_time IS NOT NULL
+           AND out_time IS NULL`, [outTimeForDb, staffEmailBound, entryLogId, userEmail, eventId]));
             if (upd.affectedRows === 0) {
                 await conn.rollback();
                 return punchEntryExitToggle(pool, userEmail, eventId, staffEmailBound, retryDepth + 1);

@@ -2,9 +2,9 @@
  * QRコード打刻Lambda関数
  * POST /v1/users/attendance
  *
- * 退室時: 直近の入室行（type=entry）を log_id で UPDATE し out_time を埋める（履歴APIが entry 行を見ても未退室にならない）。
+ * 退室時: 当該イベント・ユーザーで「in_time IS NOT NULL かつ out_time IS NULL」の行を UPDATE し out_time を埋める。
  *         併せて type=exit の行を INSERT（v_attendance_details の結合用）。
- * 入室時: type=entry の行を INSERT。
+ * 入室時: 上記の開いている行が無ければ type=entry の行を INSERT（最新行の type だけでは判定しない）。
  * 時刻: すべて JST（Asia/Tokyo）の YYYY-MM-DD HH:mm:ss で RDS DATETIME と整合。
  */
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
@@ -114,20 +114,6 @@ function isOutTimeEmpty(out: unknown): boolean {
   return s === '' || s === 'null' || s.startsWith('0000-00-00');
 }
 
-/**
- * 「この時点で退室処理が必要」= 最新行がまだ開いた入室状態
- * - 最新が exit → いいえ
- * - 最新が entry かつ out_time 未設定 → はい（006 + 履歴表示の両方に効く）
- * - レガシー（type 空）かつ out_time 未設定 → はい
- */
-function needsCheckout(latest: Record<string, unknown> | undefined): boolean {
-  if (!latest) return false;
-  const t = rowType(latest);
-  if (t === 'exit') return false;
-  if (!isOutTimeEmpty(latest.out_time)) return false;
-  return t === 'entry' || t === '';
-}
-
 type PunchResult = {
   log_id: number;
   action: 'in' | 'out';
@@ -147,6 +133,31 @@ async function fetchLatestAttendanceRow(
       [userEmail, eventId]
     )) as any[];
     return rows[0] as Record<string, unknown> | undefined;
+  });
+}
+
+/**
+ * 当該イベント・ユーザーで「入室済み（in_time あり）かつ未退室（out_time NULL）」の行を1件取得。
+ * 最新行の type に依存せず、開いているセッションのみ退室対象とする（初回が退室になる誤判定を防ぐ）。
+ */
+async function fetchOpenSessionRow(
+  pool: Pool,
+  userEmail: string,
+  eventId: number
+): Promise<{ log_id: number; in_time: string | null } | null> {
+  return withConnection(pool, async (conn) => {
+    const [rows] = (await conn.execute(
+      `SELECT log_id, in_time FROM attendance_logs
+       WHERE email = ? AND event_id = ?
+         AND in_time IS NOT NULL
+         AND out_time IS NULL
+       ORDER BY log_id DESC
+       LIMIT 1`,
+      [userEmail, eventId]
+    )) as any[];
+    const r = rows[0];
+    if (!r) return null;
+    return { log_id: Number(r.log_id), in_time: (r.in_time as string) ?? null };
   });
 }
 
@@ -238,13 +249,12 @@ async function punchEntryExitToggle(
     throw new Error('Attendance punch retry limit exceeded');
   }
 
-  const latest = await fetchLatestAttendanceRow(pool, userEmail, eventId);
-  const checkout = needsCheckout(latest);
+  const openSession = await fetchOpenSessionRow(pool, userEmail, eventId);
   const staffEmailBound = requireNonEmptyString(staffEmail, 'staff_email');
 
-  if (checkout && latest) {
-    const entryLogId = Number(latest.log_id);
-    const entryInTime = (latest.in_time as string | null) ?? null;
+  if (openSession) {
+    const entryLogId = openSession.log_id;
+    const entryInTime = openSession.in_time;
 
     const outTimeForDb = requireJstDatetimeForBind(nowJstMysqlDatetime(), 'out_time (checkout UPDATE)');
 
@@ -252,13 +262,13 @@ async function punchEntryExitToggle(
     try {
       await conn.beginTransaction();
 
-      // プレースホルダ順: 1=out_time(DATETIME文字列), 2=staff_email, 3=log_id, 4=email, 5=event_id
+      // 開いているセッション行のみ更新（in_time 必須・out_time NULL を再確認）
       const [upd] = (await conn.execute(
         `UPDATE attendance_logs
          SET out_time = ?, staff_email = ?, updated_at = CURRENT_TIMESTAMP
          WHERE log_id = ? AND email = ? AND event_id = ?
-           AND (type = 'entry' OR type IS NULL OR type = '')
-           AND (out_time IS NULL)`,
+           AND in_time IS NOT NULL
+           AND out_time IS NULL`,
         [outTimeForDb, staffEmailBound, entryLogId, userEmail, eventId]
       )) as any;
 
