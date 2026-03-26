@@ -34,6 +34,29 @@ function toIsoOrNull(v: unknown): string | null {
   return d.toISOString();
 }
 
+/**
+ * LIMIT 用: 1..max の整数。
+ * mysql2 + prepared statement で LIMIT ? / OFFSET ? が Incorrect arguments to mysql_stmt_execute になる環境があるため、
+ * 検証済み整数のみテンプレートに埋め込む（SQL インジェクションは clamp で防ぐ）。
+ */
+function clampLimit(v: unknown, fallback: number, max: number): number {
+  if (v === undefined || v === null || v === '') return fallback;
+  const n = typeof v === 'number' && Number.isFinite(v) ? v : parseInt(String(v).trim(), 10);
+  if (!Number.isFinite(n) || Number.isNaN(n)) return fallback;
+  const t = Math.trunc(n);
+  if (t < 1) return fallback;
+  if (t > max) return max;
+  return t;
+}
+
+function clampOffset(v: unknown, fallback: number): number {
+  if (v === undefined || v === null || v === '') return fallback;
+  const n = typeof v === 'number' && Number.isFinite(v) ? v : parseInt(String(v).trim(), 10);
+  if (!Number.isFinite(n) || Number.isNaN(n)) return fallback;
+  const t = Math.trunc(n);
+  return t < 0 ? fallback : t;
+}
+
 export const handler = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
@@ -52,7 +75,7 @@ export const handler = async (
       );
     }
     const canViewAll = isStaffOrAdmin(permission.roleFlag);
-    const requestEmail = permission.email;
+    const requestEmail = permission.email?.trim() || '';
 
     const eventId = event.pathParameters?.eventId;
     if (!eventId) {
@@ -60,11 +83,8 @@ export const handler = async (
     }
 
     const queryParams = event.queryStringParameters || {};
-    let limit = queryParams.limit ? parseInt(queryParams.limit, 10) : 100;
-    let offset = queryParams.offset ? parseInt(queryParams.offset, 10) : 0;
-
-    if (isNaN(limit) || limit < 1 || limit > 1000) limit = 100;
-    if (isNaN(offset) || offset < 0) offset = 0;
+    const limit = clampLimit(queryParams.limit ?? undefined, 100, 1000);
+    const offset = clampOffset(queryParams.offset ?? undefined, 0);
 
     const pool = getDB();
 
@@ -99,8 +119,8 @@ export const handler = async (
           INNER JOIN users u ON u.email = vp.email
           WHERE vp.event_id = ?
           ORDER BY vp.registration_date DESC
-          LIMIT ? OFFSET ?`,
-          [eventId, limit, offset]
+          LIMIT ${limit} OFFSET ${offset}`,
+          [eventId]
         )) as any[];
         rows = r || [];
         const [countResult] = (await conn.execute(
@@ -109,6 +129,9 @@ export const handler = async (
         )) as any[];
         total = countResult[0]?.total || 0;
       } else {
+        if (!requestEmail) {
+          return { notFound: false as const, forbiddenSelf: true as const };
+        }
         const [r] = (await conn.execute(
           `SELECT 
             vp.email,
@@ -149,6 +172,7 @@ export const handler = async (
 
       return {
         notFound: false as const,
+        forbiddenSelf: false as const,
         eventData,
         participantsWithDetails,
         total,
@@ -156,6 +180,10 @@ export const handler = async (
         offset,
       };
     });
+
+    if ('forbiddenSelf' in payload && payload.forbiddenSelf) {
+      return errorResponse('FORBIDDEN', 'User email not available', 403);
+    }
 
     if (payload.notFound) {
       return errorResponse('NOT_FOUND', 'Event not found', 404);
