@@ -1,18 +1,13 @@
 version: 1
 applications:
-  - appRoot: apps/tetris
+  - appRoot: apps/qr-attendance/frontend
     frontend:
       phases:
         preBuild:
           commands:
-            - echo "Current directory:" && pwd
-            - echo "Node version:" && node --version
-            - echo "NPM version:" && npm --version
-            - echo "Installing dependencies..."
             - npm ci
         build:
           commands:
-            - echo "Building Next.js app..."
             - npm run build
       artifacts:
         baseDirectory: .next
@@ -20,5 +15,5 @@ applications:
           - '**/*'
       cache:
         paths:
-          - node_modules/**/*
           - .next/cache/**/*
+          - node_modules/**/*
