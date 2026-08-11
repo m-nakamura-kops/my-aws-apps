@@ -1,19 +1,19 @@
 version: 1
-applications:
-  - appRoot: apps/qr-attendance/frontend
-    frontend:
-      phases:
-        preBuild:
-          commands:
-            - npm ci
-        build:
-          commands:
-            - npm run build
-      artifacts:
-        baseDirectory: .next
-        files:
-          - '**/*'
-      cache:
-        paths:
-          - .next/cache/**/*
-          - node_modules/**/*
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - cd apps/qr-attendance/frontend
+        - npm ci
+    build:
+      commands:
+        - cd apps/qr-attendance/frontend
+        - npm run build
+  artifacts:
+    baseDirectory: apps/qr-attendance/frontend/.next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - apps/qr-attendance/frontend/.next/cache/**/*
+      - apps/qr-attendance/frontend/node_modules/**/*
