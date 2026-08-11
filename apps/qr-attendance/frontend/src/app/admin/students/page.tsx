@@ -364,7 +364,7 @@ function StudentModal({
 }: {
   student: Student | null;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (payload?: { message?: string }) => void;
 }) {
   const [formData, setFormData] = useState({
     email: student?.email || '',
