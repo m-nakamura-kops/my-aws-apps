@@ -98,14 +98,24 @@ export class QrAttendanceApiStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
     });
 
-    // CORS: ブラウザから localhost:3000（Next.js）を明示許可。本番フロントのオリジンは CDK コンテキスト cors:extraOrigins 等で追加可能。
+    // CORS: ブラウザから localhost:3000（Next.js）を明示許可。本番フロント（Amplify Hosting）は既定で許可。
+    // 別オリジンを追加/上書きする場合は cdk.json の context に frontendPublicOrigin / corsExtraOrigins を設定。
     const corsExtraOrigins =
       (this.node.tryGetContext('corsExtraOrigins') as string[] | undefined) ?? [];
-    const corsAllowOrigins = [
-      'http://localhost:3000',
-      'http://127.0.0.1:3000',
-      ...corsExtraOrigins,
-    ];
+    // 本番フロントの既定オリジン（Amplify Hosting）。context 未指定でも許可されるよう既定値を持たせる。
+    const DEFAULT_FRONTEND_PUBLIC_ORIGIN = 'https://main.d2s96axh42icx2.amplifyapp.com';
+    const frontendPublicOrigin =
+      (this.node.tryGetContext('frontendPublicOrigin') as string | undefined) ??
+      DEFAULT_FRONTEND_PUBLIC_ORIGIN;
+    // 重複を除去（同一オリジンを複数回渡すと API Gateway 側でエラーになるため）
+    const corsAllowOrigins = Array.from(
+      new Set([
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        frontendPublicOrigin,
+        ...corsExtraOrigins,
+      ])
+    );
     // OPTIONS, GET, POST, PUT, DELETE を含む（Cors.ALL_METHODS でヘッダーと整合）
     const corsAllowMethods = apigateway.Cors.ALL_METHODS;
     const corsAllowHeaders = [
@@ -127,8 +137,8 @@ export class QrAttendanceApiStack extends cdk.Stack {
       },
     });
 
-    // Lambda 未到達の 4xx/5xx（スロットル・認可エラー等）でもブラウザが CORS エラーにならないようゲートウェイ応答にヘッダーを付与
-    const gwCorsOrigin = "'http://localhost:3000'";
+    // Lambda 未到達の 4xx/5xx 用（単一オリジン）。既定は本番フロント（Amplify）。context で上書き可。
+    const gwCorsOrigin = `'${frontendPublicOrigin}'`;
     const gwCorsHeaders = "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'";
     const gwCorsMethods = "'GET,POST,PUT,DELETE,OPTIONS'";
     this.api.addGatewayResponse('Default4xxCors', {
@@ -995,6 +1005,15 @@ export class QrAttendanceApiStack extends cdk.Stack {
     // protectedResource.addMethod('GET', new apigateway.LambdaIntegration(sampleLambda), {
     //   authorizer: authorizer,
     // });
+
+    // すべての Lambda 関数の実レスポンス（successResponse / errorResponse）に正しい CORS オリジンを
+    // 返させるため、CORS_ALLOW_ORIGIN 環境変数を一括で注入する。
+    // （プリフライト OPTIONS は API Gateway の defaultCorsPreflightOptions が処理する）
+    for (const child of this.node.findAll()) {
+      if (child instanceof lambda.Function) {
+        child.addEnvironment('CORS_ALLOW_ORIGIN', frontendPublicOrigin);
+      }
+    }
 
     // 出力
     new cdk.CfnOutput(this, 'ApiUrl', {

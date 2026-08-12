@@ -20,23 +20,31 @@ npx cdk deploy QrAttendanceApiStack-dev
 
 （スタック名は環境に合わせて変更）
 
-### 本番など別オリジンを許可する場合
+### 本番フロント（Amplify Hosting）のオリジン
 
-`cdk.json` の `context` に例:
+本番フロントのオリジン `https://main.d2s96axh42icx2.amplifyapp.com` は
+`api-stack.ts` の既定値 + `cdk.json` の `context.frontendPublicOrigin` として設定済みです。
+そのため **追加のフラグなしで `cdk deploy` するだけ** で以下が有効になります。
+
+- API Gateway のプリフライト（OPTIONS）許可オリジンに Amplify を追加
+- API Gateway の 4xx/5xx GatewayResponse の `Access-Control-Allow-Origin` を Amplify に
+- **全 Lambda 関数**へ `CORS_ALLOW_ORIGIN`（= Amplify オリジン）を自動注入
+  （`api-stack.ts` 末尾の `this.node.findAll()` ループ。実レスポンスの CORS ヘッダーに反映）
+
+### 別オリジンに変更/追加する場合
+
+`cdk.json` の `context` を編集:
 
 ```json
-"corsExtraOrigins": [
-  "https://your-frontend.example.com"
-]
+"frontendPublicOrigin": "https://your-frontend.example.com",
+"corsExtraOrigins": ["https://another.example.com"]
 ```
 
-Lambda 側も **同じオリジン** を返すよう、該当関数の環境変数を設定:
-
-- `CORS_ALLOW_ORIGIN` = `https://your-frontend.example.com`
-
-（未設定時は `http://localhost:3000` が使われます。）
+`frontendPublicOrigin` は Lambda の `CORS_ALLOW_ORIGIN` にも使われます（単一オリジン）。
+`corsExtraOrigins` はプリフライトの許可リストにのみ追加されます。
 
 ## 3. 動作確認
 
-ブラウザで `http://localhost:3000` からログイン API を実行し、レスポンスヘッダに  
-`Access-Control-Allow-Origin: http://localhost:3000` が付くことを確認してください。
+ブラウザで本番フロント `https://main.d2s96axh42icx2.amplifyapp.com` から登録/ログイン API を実行し、
+プリフライト（OPTIONS）と実レスポンスの両方に  
+`Access-Control-Allow-Origin: https://main.d2s96axh42icx2.amplifyapp.com` が付くことを確認してください。
