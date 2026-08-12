@@ -26,6 +26,11 @@ const frontendLoginUrl =
   process.env.FRONTEND_LOGIN_URL ||
   'https://example.com/login';
 
+// DB_HOST の一時上書き。RDS インスタンス再作成時にクロススタック Export（endpoint）の
+// 「in use」ロックを外すために使用する（-c dbHostOverride=<endpoint>）。
+// 未指定時は通常どおり RDS スタックのインスタンス endpoint をクロススタック参照する。
+const dbHostOverride = app.node.tryGetContext('dbHostOverride') as string | undefined;
+
 // RDSスタック
 const rdsStack = new QrAttendanceRdsStack(app, `QrAttendanceRdsStack-${env}`, {
   env: envConfig,
@@ -57,7 +62,7 @@ const apiStack = new QrAttendanceApiStack(app, `QrAttendanceApiStack-${env}`, {
   vpc: rdsStack.vpc,
   userPool: cognitoStack.userPool,
   userPoolClient: cognitoStack.userPoolClient,
-  dbEndpoint: rdsStack.dbInstance.instanceEndpoint.hostname,
+  dbEndpoint: dbHostOverride ?? rdsStack.dbInstance.instanceEndpoint.hostname,
   tags: {
     Project: 'qr-attendance',
     Environment: env,

@@ -82,7 +82,9 @@ export class QrAttendanceRdsStack extends cdk.Stack {
     });
 
     // RDS MySQLインスタンス
-    this.dbInstance = new rds.DatabaseInstance(this, 'DatabaseInstance', {
+    // NOTE: 旧インスタンス（Construct ID 'DatabaseInstance'）が CloudFormation 管理外で削除され
+    // ドリフトしたため、Construct ID を 'DatabaseInstanceV2' に付け替えて新規作成させる。
+    this.dbInstance = new rds.DatabaseInstance(this, 'DatabaseInstanceV2', {
       engine: rds.DatabaseInstanceEngine.mysql({
         version: rds.MysqlEngineVersion.VER_8_0,
       }),
@@ -102,12 +104,12 @@ export class QrAttendanceRdsStack extends cdk.Stack {
       maxAllocatedStorage: 100,
       storageEncrypted: true,
       backupRetention: cdk.Duration.days(7),
-      deleteAutomatedBackups: true,
-      deletionProtection: false, // 開発環境ではfalse、本番ではtrue推奨
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // 開発環境用、本番ではRETAIN推奨
-      multiAz: false, // 開発環境ではfalse（コスト削減）、本番ではtrue推奨
+      deleteAutomatedBackups: false, // 再発防止: インスタンス削除時も自動バックアップを保持
+      deletionProtection: true, // 再発防止: 誤削除を防ぐ（本番）
+      removalPolicy: cdk.RemovalPolicy.RETAIN, // 再発防止: スタック削除時もインスタンスを保持（本番）
+      multiAz: false, // コスト削減のため単一AZ（必要に応じて true）
       publiclyAccessible: false,
-      enablePerformanceInsights: false, // 開発環境ではfalse（コスト削減）
+      enablePerformanceInsights: false, // コスト削減
     });
 
     // 出力
