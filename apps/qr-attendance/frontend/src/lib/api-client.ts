@@ -8,7 +8,7 @@
 import { NewPasswordRequiredError } from '@/lib/auth-errors';
 
 /** 本番 API Gateway（execute-api）— ビルド・.env に依存しない */
-const API_BASE_URL = 'https://xcv8usy3dh.execute-api.ap-northeast-1.amazonaws.com/prod';
+const API_BASE_URL = 'https://0cpwlootl6.execute-api.ap-northeast-1.amazonaws.com/prod';
 
 function getApiBaseUrl(): string {
   return API_BASE_URL.replace(/\/+$/, '');
