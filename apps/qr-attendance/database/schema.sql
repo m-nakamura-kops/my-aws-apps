@@ -70,9 +70,11 @@ CREATE TABLE attendance_logs (
     log_id INT NOT NULL AUTO_INCREMENT COMMENT '打刻ID',
     email VARCHAR(255) NOT NULL COMMENT 'メールアドレス',
     event_id INT NOT NULL COMMENT 'イベントID',
-    in_time DATETIME NOT NULL COMMENT '入室時刻',
+    type VARCHAR(20) NOT NULL DEFAULT 'entry' COMMENT 'entry=入室 exit=退出',
+    in_time DATETIME NULL COMMENT '入室時刻（entry時必須）',
     out_time DATETIME NULL COMMENT '退室時刻',
     staff_email VARCHAR(255) NOT NULL COMMENT '担当者メアド',
+    notes VARCHAR(255) NULL COMMENT '備考（手動打刻等・任意）',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
     PRIMARY KEY (log_id),
@@ -127,22 +129,35 @@ FROM events e
 INNER JOIN registrations r ON e.event_id = r.event_id
 INNER JOIN users u ON r.email = u.email;
 
--- 打刻履歴詳細ビュー
+-- 打刻履歴詳細ビュー（entry 行と直後の exit 行を結合）
 CREATE OR REPLACE VIEW v_attendance_details AS
-SELECT 
-    al.log_id,
-    al.email,
+SELECT
+    entry.log_id,
+    entry.email,
     u.name_kanji AS user_name,
-    al.event_id,
+    entry.event_id,
     e.event_name,
     e.event_date,
-    al.in_time,
-    al.out_time,
-    TIMESTAMPDIFF(MINUTE, al.in_time, al.out_time) AS stay_minutes,
-    al.staff_email,
+    entry.in_time,
+    exit_row.out_time,
+    TIMESTAMPDIFF(MINUTE, entry.in_time, exit_row.out_time) AS stay_minutes,
+    entry.staff_email,
     staff.name_kanji AS staff_name,
-    al.created_at
-FROM attendance_logs al
-INNER JOIN users u ON al.email = u.email
-INNER JOIN events e ON al.event_id = e.event_id
-INNER JOIN users staff ON al.staff_email = staff.email;
+    entry.created_at
+FROM attendance_logs entry
+INNER JOIN users u ON entry.email = u.email
+INNER JOIN events e ON entry.event_id = e.event_id
+INNER JOIN users staff ON entry.staff_email = staff.email
+LEFT JOIN attendance_logs exit_row
+  ON exit_row.event_id = entry.event_id
+  AND exit_row.email = entry.email
+  AND exit_row.type = 'exit'
+  AND exit_row.log_id = (
+    SELECT MIN(e2.log_id)
+    FROM attendance_logs e2
+    WHERE e2.event_id = entry.event_id
+      AND e2.email = entry.email
+      AND e2.type = 'exit'
+      AND e2.log_id > entry.log_id
+  )
+WHERE entry.type = 'entry';
