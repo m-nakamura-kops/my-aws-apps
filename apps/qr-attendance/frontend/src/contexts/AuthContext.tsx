@@ -12,36 +12,16 @@
  */
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { Amplify } from 'aws-amplify';
 import { signIn, signUp, signOut, getCurrentUser, confirmSignIn, updatePassword } from 'aws-amplify/auth';
 import type { SignInOutput, SignUpOutput, AuthUser } from 'aws-amplify/auth';
 import { apiClient } from '@/lib/api-client';
 import { NewPasswordRequiredError } from '@/lib/auth-errors';
+import {
+  COGNITO_CLIENT_ID,
+  COGNITO_USER_POOL_ID,
+} from '@/lib/amplify-config';
 
-// Amplify設定（クライアントコンポーネントで実行）
-if (typeof window !== 'undefined') {
-  Amplify.configure({
-    Auth: {
-      Cognito: {
-        userPoolId: process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || '',
-        userPoolClientId: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || '',
-        region:
-          process.env.NEXT_PUBLIC_COGNITO_REGION ||
-          process.env.NEXT_PUBLIC_AWS_REGION ||
-          'ap-northeast-1',
-        loginWith: {
-          email: true,
-        },
-        signUpVerificationMethod: 'code',
-        userAttributes: {
-          email: {
-            required: true,
-          },
-        },
-      },
-    },
-  } as any, { ssr: false });
-}
+const isCognitoConfigured = Boolean(COGNITO_USER_POOL_ID && COGNITO_CLIENT_ID);
 
 export enum UserRole {
   USER = 1,      // 利用者
@@ -107,10 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const checkAuth = async () => {
     try {
-      const cognitoUserPoolId = process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || '';
-      const cognitoClientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || '';
-      
-      if (cognitoUserPoolId && cognitoClientId) {
+      if (isCognitoConfigured) {
         // Cognito設定がある場合: Cognitoから認証状態を取得
         const currentUser = await getCurrentUser();
         setUser(currentUser);
@@ -208,9 +185,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const completeNewPassword = async (email: string, newPassword: string) => {
-    const cognitoUserPoolId = process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || '';
-    const cognitoClientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || '';
-    if (!cognitoUserPoolId || !cognitoClientId) {
+    if (!isCognitoConfigured) {
       throw new Error('Cognito が未設定のため、初回パスワード設定は利用できません。');
     }
     const { isSignedIn } = await confirmSignIn({ challengeResponse: newPassword });
@@ -223,10 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const login = async (email: string, password: string) => {
-    const cognitoUserPoolId = process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || '';
-    const cognitoClientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || '';
-
-    if (cognitoUserPoolId && cognitoClientId) {
+    if (isCognitoConfigured) {
       const out = await signIn({ username: email, password });
       const step = out.nextStep?.signInStep;
       const needsNewPassword =
@@ -298,10 +270,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     // Cognitoでもサインアップ（Amplify UIとの統合のため）
     // ローカル開発環境ではCognito設定がない場合があるため、スキップ
-    const cognitoUserPoolId = process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || '';
-    const cognitoClientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || '';
-    
-    if (cognitoUserPoolId && cognitoClientId) {
+    if (isCognitoConfigured) {
       try {
         const output = await signUp({
           username: email,
@@ -337,9 +306,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const changeOwnPassword = async (previousPassword: string, proposedPassword: string) => {
-    const cognitoUserPoolId = process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || '';
-    const cognitoClientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || '';
-    if (!cognitoUserPoolId || !cognitoClientId) {
+    if (!isCognitoConfigured) {
       throw new Error('Cognito が未設定のため、ここからパスワードを変更できません。');
     }
     try {
@@ -353,10 +320,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    const cognitoUserPoolId = process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID || '';
-    const cognitoClientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID || '';
-
-    if (cognitoUserPoolId && cognitoClientId) {
+    if (isCognitoConfigured) {
       try {
         await signOut();
       } catch (err: any) {
@@ -376,9 +340,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isStaff = role === UserRole.STAFF || role === UserRole.ADMIN;
   const roleLabel =
     role === UserRole.ADMIN ? '管理者' : role === UserRole.STAFF ? 'スタッフ' : '利用者';
-  const isCognitoEnabled = !!(
-    process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID && process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID
-  );
+  const isCognitoEnabled = isCognitoConfigured;
 
   return (
     <AuthContext.Provider
