@@ -12,10 +12,10 @@
  */
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { signIn, signUp, signOut, getCurrentUser, confirmSignIn, updatePassword } from 'aws-amplify/auth';
+import { signIn, signOut, getCurrentUser, confirmSignIn, updatePassword } from 'aws-amplify/auth';
 import type { SignInOutput, SignUpOutput, AuthUser } from 'aws-amplify/auth';
 import { apiClient } from '@/lib/api-client';
-import { NewPasswordRequiredError } from '@/lib/auth-errors';
+import { NewPasswordRequiredError, isNewPasswordRequiredError } from '@/lib/auth-errors';
 import {
   COGNITO_CLIENT_ID,
   COGNITO_USER_POOL_ID,
@@ -199,23 +199,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, password: string) => {
     if (isCognitoConfigured) {
-      const out = await signIn({ username: email, password });
-      const step = out.nextStep?.signInStep;
-      const needsNewPassword =
-        step === 'CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED' ||
-        (typeof step === 'string' && step.toUpperCase().includes('NEW_PASSWORD'));
-      if (needsNewPassword) {
-        throw new NewPasswordRequiredError(email);
+      try {
+        const out = await signIn({ username: email, password });
+        const step = out.nextStep?.signInStep;
+        const needsNewPassword =
+          step === 'CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED' ||
+          (typeof step === 'string' && step.toUpperCase().includes('NEW_PASSWORD'));
+        if (needsNewPassword) {
+          throw new NewPasswordRequiredError(email);
+        }
+        if (!out.isSignedIn) {
+          throw new Error(
+            step ? `追加の認証手順が必要です: ${step}` : 'ログインに失敗しました'
+          );
+        }
+        const response = await apiClient.login(email, password);
+        await persistApiSession(response);
+        await checkAuth();
+        return out;
+      } catch (err: unknown) {
+        if (isNewPasswordRequiredError(err)) {
+          throw err;
+        }
+        // Cognito 未作成・未同期時: API 側の補合ログインを試し、必要なら Amplify を再試行
+        const name = (err as { name?: string })?.name || '';
+        const message = err instanceof Error ? err.message : '';
+        const cognitoMissing =
+          name === 'UserNotFoundException' ||
+          message.includes('User does not exist') ||
+          message.includes('UserNotFoundException');
+        if (cognitoMissing) {
+          const response = await apiClient.login(email, password);
+          await persistApiSession(response);
+          try {
+            const retry = await signIn({ username: email, password });
+            await checkAuth();
+            return retry;
+          } catch {
+            await checkAuth();
+            return {
+              isSignedIn: true,
+              nextStep: { signInStep: 'DONE' },
+            } as SignInOutput;
+          }
+        }
+        throw err;
       }
-      if (!out.isSignedIn) {
-        throw new Error(
-          step ? `追加の認証手順が必要です: ${step}` : 'ログインに失敗しました'
-        );
-      }
-      const response = await apiClient.login(email, password);
-      await persistApiSession(response);
-      await checkAuth();
-      return out;
     }
 
     const response = await apiClient.login(email, password);
@@ -259,50 +288,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     nameKana: string,
     tel: string
   ) => {
-    // API経由でユーザー登録（Cognito + DB登録）
-    const response = await apiClient.register({
+    // API が Cognito + DB の両方を作成する（フロントでの二重 SignUp はしない）
+    await apiClient.register({
       email,
       password,
       name_kanji: nameKanji,
       name_kana: nameKana,
       tel,
     });
-    
-    // Cognitoでもサインアップ（Amplify UIとの統合のため）
-    // ローカル開発環境ではCognito設定がない場合があるため、スキップ
-    if (isCognitoConfigured) {
-      try {
-        const output = await signUp({
-          username: email,
-          password,
-          options: {
-            userAttributes: {
-              email,
-            },
-          },
-        });
-        return output;
-      } catch (cognitoError: any) {
-        // Cognitoエラーは警告のみ（データベースには登録済み）
-        console.warn('Cognito registration failed, but database registration succeeded:', cognitoError);
-        // ダミーのSignUpOutputを返す
-        return {
-          userId: email,
-          nextStep: {
-            signUpStep: 'DONE',
-          },
-        } as SignUpOutput;
-      }
-    } else {
-      // Cognito設定がない場合は、データベース登録のみで完了
-      console.log('Cognito not configured, skipping Cognito registration');
-      return {
-        userId: email,
-        nextStep: {
-          signUpStep: 'DONE',
-        },
-      } as SignUpOutput;
-    }
+
+    return {
+      userId: email,
+      nextStep: {
+        signUpStep: 'DONE',
+      },
+    } as SignUpOutput;
   };
 
   const changeOwnPassword = async (previousPassword: string, proposedPassword: string) => {

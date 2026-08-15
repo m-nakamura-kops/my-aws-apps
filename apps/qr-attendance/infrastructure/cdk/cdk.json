@@ -18,6 +18,7 @@
   },
   "context": {
     "frontendPublicOrigin": "https://main.d2s96axh42icx2.amplifyapp.com",
+    "frontendLoginUrl": "https://main.d2s96axh42icx2.amplifyapp.com/login",
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,
     "@aws-cdk/core:target-partitions": [

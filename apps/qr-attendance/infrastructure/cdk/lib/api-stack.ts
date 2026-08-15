@@ -57,6 +57,8 @@ export class QrAttendanceApiStack extends cdk.Stack {
           'cognito-idp:AdminDeleteUser',
           'cognito-idp:AdminCreateUser',
           'cognito-idp:AdminResetUserPassword',
+          'cognito-idp:AdminSetUserPassword',
+          'cognito-idp:AdminUpdateUserAttributes',
         ],
         resources: [props.userPool.userPoolArn],
       })
@@ -209,6 +211,36 @@ export class QrAttendanceApiStack extends cdk.Stack {
       },
       timeout: cdk.Duration.minutes(5),
     });
+
+    // 一時: attendance_logs.notes 追加（クエリエディタ不可時用・コンソール Test で1回実行後、スタックから削除推奨）
+    const dbPatchEnvSuffix = this.stackName.match(/^QrAttendanceApiStack-(.+)$/)?.[1] ?? 'dev';
+    const dbPatchLambda = new lambda.Function(this, 'DbPatchLambda', {
+      functionName: `qr-attendance-db-patch-notes-${dbPatchEnvSuffix}`,
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda-functions/db-patch-notes')),
+      role: lambdaRole,
+      vpc: props.vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      securityGroups: [props.lambdaSecurityGroup],
+      environment: {
+        DB_SECRET_ARN: props.rdsSecret.secretArn,
+        DB_NAME: 'qr_attendance',
+        DB_HOST: props.dbEndpoint,
+        DB_PORT: '3306',
+        DB_SSL: 'true',
+        // コード未変更時でも Lambda 更新を強制するためのダミー（必要に応じて値を書き換え）
+        FORCE_REDEPLOY_DUMMY_TS: '2026-03-27T15:00:00Z',
+      },
+      timeout: cdk.Duration.minutes(2),
+      description: 'TEMP: add attendance_logs.notes — remove after one successful invoke',
+    });
+    dbPatchLambda.node.addMetadata(
+      'warning',
+      'One-shot DB patch Lambda. Invoke once from console, then remove this resource from api-stack.ts and redeploy.'
+    );
 
     // 結合テストユーザー投入（ローカルからプライベート RDS に届かない場合用・invoke のみ）
     const seedTestUsersLambda = new lambda.Function(this, 'SeedTestUsersLambda', {

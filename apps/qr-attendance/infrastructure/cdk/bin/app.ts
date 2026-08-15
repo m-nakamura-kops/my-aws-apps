@@ -21,10 +21,11 @@ const envConfig = {
   region,
 };
 
+const DEFAULT_FRONTEND_LOGIN_URL = 'https://main.d2s96axh42icx2.amplifyapp.com/login';
 const frontendLoginUrl =
   (app.node.tryGetContext('frontendLoginUrl') as string | undefined) ||
   process.env.FRONTEND_LOGIN_URL ||
-  'https://example.com/login';
+  DEFAULT_FRONTEND_LOGIN_URL;
 
 // DB_HOST の一時上書き。RDS インスタンス再作成時にクロススタック Export（endpoint）の
 // 「in use」ロックを外すために使用する（-c dbHostOverride=<endpoint>）。
@@ -44,8 +45,9 @@ const rdsStack = new QrAttendanceRdsStack(app, `QrAttendanceRdsStack-${env}`, {
 // Cognitoスタック
 const cognitoStack = new QrAttendanceCognitoStack(app, `QrAttendanceCognitoStack-${env}`, {
   env: envConfig,
-  description: 'QRコード打刻システム - Cognito User Pool',
+  description: 'QRコード打刻システム - Cognito User Pool + CustomMessage Lambda',
   frontendLoginUrl,
+  environmentName: env,
   tags: {
     Project: 'qr-attendance',
     Environment: env,

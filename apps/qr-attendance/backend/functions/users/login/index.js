@@ -2,6 +2,9 @@
 /**
  * ユーザーログインLambda関数
  * POST /v1/users/login
+ *
+ * Cognito 認証を正とし、DB 欠落時は Cognito 情報から自動補完する。
+ * 逆に DB のみ存在する場合は Cognito ユーザーを自動作成してから認証する。
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -38,27 +41,23 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
-const client_cognito_identity_provider_1 = require("@aws-sdk/client-cognito-identity-provider");
 const connection_1 = require("./shared/db/connection");
 const secrets_1 = require("./shared/db/secrets");
 const response_1 = require("./shared/utils/response");
+const cognito_db_sync_1 = require("./shared/utils/cognito-db-sync");
 const crypto = __importStar(require("crypto"));
-const cognitoClient = new client_cognito_identity_provider_1.CognitoIdentityProviderClient({ region: process.env.AWS_REGION || 'ap-northeast-1' });
-const userPoolId = process.env.USER_POOL_ID || '';
-const cognitoClientId = process.env.COGNITO_CLIENT_ID || '';
-const useCognito = !!(userPoolId && cognitoClientId);
 const handler = async (event) => {
-    // CORSプリフライトリクエスト対応
     if (event.httpMethod === 'OPTIONS') {
         return (0, response_1.corsResponse)();
     }
-    // モジュール読み込み時の Cognito 利用判定（Lambda 環境変数が空だと DB ハッシュ比較に落ちる）
+    const userPoolId = (0, cognito_db_sync_1.getUserPoolId)();
+    const cognitoClientId = (0, cognito_db_sync_1.getCognitoClientId)();
+    const useCognito = !!(userPoolId && cognitoClientId);
     console.log('[login] useCognito=', useCognito, {
         USER_POOL_ID_set: Boolean(userPoolId),
         COGNITO_CLIENT_ID_set: Boolean(cognitoClientId),
     });
     try {
-        // リクエストボディの解析
         if (!event.body) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Request body is required', 400);
         }
@@ -66,7 +65,7 @@ const handler = async (event) => {
         let password;
         try {
             const body = JSON.parse(event.body);
-            email = body?.email ?? '';
+            email = String(body?.email ?? '').trim();
             password = body?.password ?? '';
         }
         catch {
@@ -75,40 +74,18 @@ const handler = async (event) => {
         if (!email || !password) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Email and password are required', 400);
         }
-        // データベース接続を初期化
         await (0, secrets_1.initDBFromSecrets)();
         const pool = (0, connection_1.getDB)();
-        // ユーザー情報を取得（is_active カラム未導入の DB でも動作するよう SELECT に含めない）
-        const [users] = (await (0, connection_1.withConnection)(pool, async (conn) => conn.execute('SELECT email, password, name_kanji, name_kana, org_id, role_flag FROM users WHERE email = ?', [email])));
-        if (users.length === 0) {
-            console.log('[login] DB: no row for email=', email, '(seed-test-users がこの RDS に届いていない可能性)');
-            return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
-        }
-        const user = users[0];
-        // パスワード値はログに出さず、デバッグ用に行の存在と role のみ
-        console.log('User found in DB:', {
-            email: user.email,
-            name_kanji: user.name_kanji,
-            org_id: user.org_id,
-            role_flag: user.role_flag,
-            password_stored_length: user.password != null ? String(user.password).length : 0,
-        });
-        // 認証処理
         let authToken = '';
         let refreshToken = '';
+        let user = await (0, connection_1.withConnection)(pool, async (conn) => (0, cognito_db_sync_1.findDbUser)(conn, email));
         if (useCognito) {
-            // Cognito認証を使用（本番環境）
             try {
-                const authCommand = new client_cognito_identity_provider_1.InitiateAuthCommand({
-                    AuthFlow: 'USER_PASSWORD_AUTH',
-                    ClientId: cognitoClientId,
-                    AuthParameters: {
-                        USERNAME: email,
-                        PASSWORD: password,
-                    },
-                });
-                const authResponse = await cognitoClient.send(authCommand);
+                let authResponse = await (0, cognito_db_sync_1.initiateUserPasswordAuth)(email, password);
                 if (authResponse.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
+                    if (!user) {
+                        user = await (0, connection_1.withConnection)(pool, async (conn) => (0, cognito_db_sync_1.ensureDbUserFromCognitoAuth)(conn, email, { role_flag: 1 }));
+                    }
                     return (0, response_1.successResponse)({
                         challengeName: 'NEW_PASSWORD_REQUIRED',
                         session: authResponse.Session,
@@ -122,33 +99,80 @@ const handler = async (event) => {
                 }
                 authToken = authResponse.AuthenticationResult.IdToken || '';
                 refreshToken = authResponse.AuthenticationResult.RefreshToken || '';
+                // Cognito 成功 → DB が無ければ自動作成
+                if (!user) {
+                    console.log('[login] Cognito OK but DB missing; auto-creating users row for', email);
+                    user = await (0, connection_1.withConnection)(pool, async (conn) => (0, cognito_db_sync_1.ensureDbUserFromCognitoAuth)(conn, email, { role_flag: 1 }));
+                }
             }
             catch (cognitoError) {
                 console.error('Cognito authentication error:', cognitoError);
-                if (cognitoError.name === 'NotAuthorizedException' || cognitoError.name === 'UserNotFoundException') {
-                    return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
+                // Cognito に居ない / パスワード不一致だが、DB のハッシュが一致する場合は Cognito を補完
+                if (cognitoError.name === 'UserNotFoundException' ||
+                    cognitoError.name === 'NotAuthorizedException') {
+                    if (!user) {
+                        return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
+                    }
+                    const hashedPassword = (0, cognito_db_sync_1.hashPasswordSha256)(password);
+                    const dbPasswordMatches = user.password === hashedPassword;
+                    if (!dbPasswordMatches) {
+                        // 招待ユーザー（DB はプレースホルダ）で Cognito 未作成のケースは
+                        // 任意パスワードでの Cognito 作成を許さない
+                        return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
+                    }
+                    try {
+                        console.log('[login] healing Cognito from DB credentials for', email);
+                        await (0, cognito_db_sync_1.ensureCognitoUserFromDbCredentials)({
+                            email,
+                            password,
+                            name: user.name_kanji || email,
+                        });
+                        const retry = await (0, cognito_db_sync_1.initiateUserPasswordAuth)(email, password);
+                        if (retry.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
+                            return (0, response_1.successResponse)({
+                                challengeName: 'NEW_PASSWORD_REQUIRED',
+                                session: retry.Session,
+                                email,
+                                userName: user.name_kanji || email,
+                                roleFlag: user.role_flag || 1,
+                            });
+                        }
+                        if (!retry.AuthenticationResult) {
+                            return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
+                        }
+                        authToken = retry.AuthenticationResult.IdToken || '';
+                        refreshToken = retry.AuthenticationResult.RefreshToken || '';
+                    }
+                    catch (healErr) {
+                        console.error('[login] Cognito heal failed:', healErr);
+                        return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
+                    }
                 }
-                throw cognitoError;
+                else {
+                    throw cognitoError;
+                }
             }
         }
         else {
-            // ローカル開発環境: データベースのパスワードで認証
-            // パスワードのハッシュ化（SHA-256を使用、本番環境ではbcrypt推奨）
+            // ローカル開発: DB ハッシュ比較
+            if (!user) {
+                return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
+            }
             const hashedPassword = crypto.createHash('sha256').update(password).digest('hex');
             if (user.password !== hashedPassword) {
                 return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
             }
-            // ローカル開発用の簡易トークン生成（本番環境ではJWTを使用）
-            const jwtSecret = process.env.JWT_SECRET || 'local-dev-secret';
             const tokenPayload = {
                 email: user.email,
                 roleFlag: user.role_flag,
-                exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60), // 24時間有効
+                exp: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
             };
             authToken = Buffer.from(JSON.stringify(tokenPayload)).toString('base64');
             refreshToken = Buffer.from(JSON.stringify({ ...tokenPayload, type: 'refresh' })).toString('base64');
         }
-        // レスポンス
+        if (!user) {
+            return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
+        }
         return (0, response_1.successResponse)({
             token: authToken,
             refreshToken: refreshToken,
@@ -160,20 +184,21 @@ const handler = async (event) => {
     }
     catch (error) {
         console.error('Login error:', error);
-        // Cognito認証エラーの処理
         if (error.name === 'NotAuthorizedException' || error.name === 'UserNotFoundException') {
             return (0, response_1.errorResponse)('UNAUTHORIZED', 'Invalid email or password', 401);
         }
-        // DB接続エラー（ローカルでMySQL未起動・Too many connections等）
         const code = error?.code ?? error?.errno;
         const msg = error?.message ?? '';
-        if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ETIMEDOUT' || code === 'ER_ACCESS_DENIED_ERROR') {
+        if (code === 'ECONNREFUSED' ||
+            code === 'ENOTFOUND' ||
+            code === 'ETIMEDOUT' ||
+            code === 'ER_ACCESS_DENIED_ERROR') {
             return (0, response_1.errorResponse)('SERVICE_UNAVAILABLE', 'Database connection failed. Ensure MySQL is running and DB_HOST/DB_USER/DB_PASSWORD/DB_NAME are set.', 503, error.message);
         }
-        if (code === 'ER_CON_COUNT_ERROR' || (typeof msg === 'string' && msg.includes('Too many connections'))) {
+        if (code === 'ER_CON_COUNT_ERROR' ||
+            (typeof msg === 'string' && msg.includes('Too many connections'))) {
             return (0, response_1.errorResponse)('SERVICE_UNAVAILABLE', 'Database is busy (too many connections). Please retry in a moment.', 503, error.message);
         }
-        // その他のエラー
         return (0, response_1.errorResponse)('INTERNAL_ERROR', 'An internal error occurred', 500, error.message);
     }
 };

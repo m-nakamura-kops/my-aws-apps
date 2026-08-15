@@ -3,56 +3,16 @@
  * 生徒登録Lambda関数（管理者用）
  * POST /v1/admin/students
  *
- * 管理者はメール・氏名等のみ指定。Cognito の招待メール（仮パスワード）を送信し、
- * DB にはログインに使わないプレースホルダハッシュを保存する。
+ * Cognito 招待ユーザー作成と DB(users) 挿入をセットで行い、
+ * 片側だけの成功状態を残さない。
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
-const client_cognito_identity_provider_1 = require("@aws-sdk/client-cognito-identity-provider");
-const connection_1 = require('./shared/db/connection');
-const secrets_1 = require('./shared/db/secrets');
-const response_1 = require('./shared/utils/response');
-const auth_1 = require('./shared/utils/auth');
-const crypto = __importStar(require("crypto"));
-const cognitoClient = new client_cognito_identity_provider_1.CognitoIdentityProviderClient({ region: process.env.AWS_REGION || 'ap-northeast-1' });
-const userPoolId = process.env.USER_POOL_ID || '';
-function randomPlaceholderPasswordHash() {
-    const raw = crypto.randomBytes(32).toString('hex');
-    return crypto.createHash('sha256').update(raw).digest('hex');
-}
+const connection_1 = require("./shared/db/connection");
+const secrets_1 = require("./shared/db/secrets");
+const response_1 = require("./shared/utils/response");
+const auth_1 = require("./shared/utils/auth");
+const cognito_db_sync_1 = require("./shared/utils/cognito-db-sync");
 const handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') {
         return (0, response_1.corsResponse)();
@@ -74,81 +34,62 @@ const handler = async (event) => {
         if (!emailRegex.test(email)) {
             return (0, response_1.errorResponse)('BAD_REQUEST', 'Invalid email format', 400);
         }
-        const placeholderHash = randomPlaceholderPasswordHash();
+        if (!(0, cognito_db_sync_1.isCognitoConfigured)()) {
+            return (0, response_1.errorResponse)('SERVICE_UNAVAILABLE', 'USER_POOL_ID is not configured. Cannot invite students without Cognito.', 503);
+        }
+        const placeholderHash = (0, cognito_db_sync_1.randomPlaceholderPasswordHash)();
         const pool = (0, connection_1.getDB)();
-        const dbResult = await (0, connection_1.withConnection)(pool, async (conn) => {
+        const dbPrep = await (0, connection_1.withConnection)(pool, async (conn) => {
             const [existingUsers] = (await conn.execute('SELECT email, role_flag FROM users WHERE email = ?', [email]));
             if (existingUsers.length > 0) {
                 const rf = existingUsers[0].role_flag;
                 if (rf === 2 || rf === 3) {
                     return { ok: false, reason: 'not_student_role' };
                 }
-                await conn.execute(`UPDATE users SET password = ?, name_kanji = COALESCE(?, name_kanji), name_kana = COALESCE(?, name_kana), tel = COALESCE(?, tel), org_id = COALESCE(?, org_id), remarks = COALESCE(?, remarks) WHERE email = ?`, [placeholderHash, name_kanji || null, name_kana || null, tel || null, org_id || null, remarks || null, email]);
-                return { ok: true, existed: true };
             }
-            await conn.execute(`INSERT INTO users (email, password, name_kanji, name_kana, tel, org_id, role_flag, remarks)
-         VALUES (?, ?, ?, ?, ?, ?, 1, ?)`, [email, placeholderHash, name_kanji, name_kana, tel, org_id || null, remarks || null]);
-            return { ok: true, existed: false };
+            const upsert = await (0, cognito_db_sync_1.upsertDbUser)(conn, {
+                email,
+                passwordHash: placeholderHash,
+                name_kanji,
+                name_kana,
+                tel,
+                org_id: org_id || null,
+                remarks: remarks || null,
+                role_flag: 1,
+            });
+            return { ok: true, created: upsert.created };
         });
-        if (!dbResult.ok) {
+        if (!dbPrep.ok) {
             return (0, response_1.errorResponse)('CONFLICT', 'このメールアドレスはスタッフまたは管理者として既に登録されています', 409);
         }
-        let invitationSent = false;
-        let cognitoMessage = '';
         try {
-            if (userPoolId) {
-                try {
-                    await cognitoClient.send(new client_cognito_identity_provider_1.AdminCreateUserCommand({
-                        UserPoolId: userPoolId,
-                        Username: email,
-                        UserAttributes: [
-                            { Name: 'email', Value: email },
-                            { Name: 'email_verified', Value: 'true' },
-                            { Name: 'name', Value: (name_kanji || '').trim() || email },
-                        ],
-                    }));
-                    invitationSent = true;
-                    cognitoMessage = '招待メールを送信しました（仮パスワード）';
-                }
-                catch (cognitoError) {
-                    if (cognitoError.name === 'UsernameExistsException') {
-                        try {
-                            await cognitoClient.send(new client_cognito_identity_provider_1.AdminUpdateUserAttributesCommand({
-                                UserPoolId: userPoolId,
-                                Username: email,
-                                UserAttributes: [{ Name: 'name', Value: (name_kanji || '').trim() || email }],
-                            }));
-                        }
-                        catch (attrErr) {
-                            console.warn('AdminUpdateUserAttributes before password reset:', attrErr);
-                        }
-                        await cognitoClient.send(new client_cognito_identity_provider_1.AdminResetUserPasswordCommand({
-                            UserPoolId: userPoolId,
-                            Username: email,
-                        }));
-                        invitationSent = true;
-                        cognitoMessage = '既存ユーザーにパスワード再設定メールを送信しました';
-                    }
-                    else {
-                        throw cognitoError;
-                    }
-                }
-            }
+            const cognitoResult = await (0, cognito_db_sync_1.ensureCognitoInvitedUser)({
+                email,
+                name: name_kanji,
+                resendInviteIfExists: true,
+            });
+            return (0, response_1.successResponse)({
+                userId: email,
+                status: 'success',
+                invitationSent: cognitoResult.invitationSent,
+                cognitoCreated: cognitoResult.created,
+                dbCreated: dbPrep.created,
+                message: cognitoResult.message || '生徒を登録し、招待メールを送信しました',
+            }, 201);
         }
         catch (cognitoError) {
-            console.error('Cognito user creation error:', cognitoError);
-            cognitoMessage = cognitoError.message || 'Cognito error';
+            console.error('Cognito invite failed after DB upsert:', cognitoError);
+            // 新規 DB 行だけ残さない（補償削除）
+            if (dbPrep.created) {
+                try {
+                    await (0, connection_1.withConnection)(pool, async (conn) => (0, cognito_db_sync_1.deleteDbUser)(conn, email));
+                }
+                catch (rollbackErr) {
+                    console.error('DB rollback after Cognito failure failed:', rollbackErr);
+                }
+            }
+            return (0, response_1.errorResponse)('INTERNAL_ERROR', 'Cognito への招待ユーザー作成に失敗したため、登録を中止しました', 502, cognitoError?.message);
         }
-        return (0, response_1.successResponse)({
-            userId: email,
-            status: 'success',
-            invitationSent,
-            message: invitationSent
-                ? cognitoMessage || '生徒を登録し、メールを送信しました'
-                : userPoolId
-                    ? `DB に登録しましたが、Cognito 処理に失敗しました: ${cognitoMessage}`
-                    : '生徒を DB に登録しました（User Pool 未設定のためメールは送信されません）',
-        }, 201);
     }
     catch (error) {
         console.error('Create student error:', error);
@@ -159,3 +100,4 @@ const handler = async (event) => {
     }
 };
 exports.handler = handler;
+//# sourceMappingURL=index.js.map
