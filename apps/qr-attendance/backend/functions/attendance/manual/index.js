@@ -3,15 +3,30 @@
  * 手動打刻実行
  * POST /v1/attendance/manual
  * 権限: 管理者(3) または スタッフ(2) のみ。event_id と email で打刻。
- * 入室: type=entry。退室: type=exit（attendance_logs に notes カラムは使わない）。
+ * 入室: 新規 INSERT（type=entry, in_time=JST, out_time=NULL）。
+ * 退室: 未退室の最新入室行の out_time を UPDATE（新規 INSERT しない）。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
-const connection_1 = require('./shared/db/connection');
-const secrets_1 = require('./shared/db/secrets');
-const response_1 = require('./shared/utils/response');
-const auth_1 = require('./shared/utils/auth');
-const role_check_1 = require('./shared/utils/role-check');
+const connection_1 = require("./shared/db/connection");
+const secrets_1 = require("./shared/db/secrets");
+const response_1 = require("./shared/utils/response");
+const auth_1 = require("./shared/utils/auth");
+const role_check_1 = require("./shared/utils/role-check");
+function nowJstMysqlDatetime() {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Tokyo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+    }).formatToParts(new Date());
+    const get = (t) => parts.find((p) => p.type === t)?.value || '00';
+    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+}
 const handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') {
         return (0, response_1.corsResponse)();
@@ -48,6 +63,7 @@ const handler = async (event) => {
         const actionParam = (body.action ?? body.type ?? 'entry').toString().toLowerCase();
         const isExit = actionParam === 'exit' || actionParam === 'out';
         const pool = (0, connection_1.getDB)();
+        const nowJst = nowJstMysqlDatetime();
         const dbResult = await (0, connection_1.withConnection)(pool, async (conn) => {
             const [events] = (await conn.execute('SELECT event_id FROM events WHERE event_id = ?', [
                 eventIdNum,
@@ -73,43 +89,44 @@ const handler = async (event) => {
                     response: (0, response_1.errorResponse)('BAD_REQUEST', 'Target user must be a student (role_flag=1)', 400),
                 };
             }
-            const [existingEntry] = (await conn.execute(`SELECT log_id FROM attendance_logs WHERE event_id = ? AND email = ? AND type = 'entry' LIMIT 1`, [eventIdNum, email]));
-            const [existingExit] = (await conn.execute(`SELECT log_id FROM attendance_logs WHERE event_id = ? AND email = ? AND type = 'exit' LIMIT 1`, [eventIdNum, email]));
             if (isExit) {
-                if (existingExit.length > 0) {
+                const [openRows] = (await conn.execute(`SELECT log_id, in_time FROM attendance_logs
+           WHERE event_id = ? AND email = ?
+             AND in_time IS NOT NULL AND out_time IS NULL
+           ORDER BY log_id DESC LIMIT 1`, [eventIdNum, email]));
+                if (openRows.length === 0) {
                     return {
                         ok: false,
-                        response: (0, response_1.errorResponse)('CONFLICT', 'Already checked out for this event', 409),
+                        response: (0, response_1.errorResponse)('BAD_REQUEST', 'No open check-in to check out', 400),
                     };
                 }
-                try {
-                    const [result] = (await conn.execute(`INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
-             VALUES (?, ?, 'exit', NULL, NOW(), ?)`, [email, eventIdNum, staffEmail]));
-                    const logId = result?.insertId ?? null;
-                    return { ok: true, logId, action: 'exit' };
-                }
-                catch (insertErr) {
-                    const code = insertErr?.code ?? insertErr?.errno;
-                    if (code === 'ER_DUP_ENTRY' || code === 1062) {
-                        return {
-                            ok: false,
-                            response: (0, response_1.errorResponse)('CONFLICT', 'Already checked out for this event', 409),
-                        };
-                    }
-                    throw insertErr;
-                }
+                const open = openRows[0];
+                await conn.execute(`UPDATE attendance_logs
+           SET out_time = ?, staff_email = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE log_id = ? AND out_time IS NULL`, [nowJst, staffEmail, open.log_id]);
+                return {
+                    ok: true,
+                    logId: Number(open.log_id),
+                    action: 'exit',
+                    in_time: open.in_time ?? null,
+                    out_time: nowJst,
+                };
             }
-            if (existingEntry.length > 0) {
+            const [openForEntry] = (await conn.execute(`SELECT log_id FROM attendance_logs
+         WHERE event_id = ? AND email = ?
+           AND in_time IS NOT NULL AND out_time IS NULL
+         LIMIT 1`, [eventIdNum, email]));
+            if (openForEntry.length > 0) {
                 return {
                     ok: false,
-                    response: (0, response_1.errorResponse)('CONFLICT', 'Already checked in for this event', 409),
+                    response: (0, response_1.errorResponse)('CONFLICT', 'Already checked in (not yet checked out)', 409),
                 };
             }
             try {
                 const [result] = (await conn.execute(`INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
-           VALUES (?, ?, 'entry', NOW(), NULL, ?)`, [email, eventIdNum, staffEmail]));
+           VALUES (?, ?, 'entry', ?, NULL, ?)`, [email, eventIdNum, nowJst, staffEmail]));
                 const logId = result?.insertId ?? null;
-                return { ok: true, logId, action: 'entry' };
+                return { ok: true, logId, action: 'entry', in_time: nowJst, out_time: null };
             }
             catch (insertErr) {
                 const code = insertErr?.code ?? insertErr?.errno;
@@ -128,11 +145,11 @@ const handler = async (event) => {
         const message = dbResult.action === 'exit' ? 'Manual exit recorded' : 'Manual attendance recorded';
         return (0, response_1.successResponse)({
             log_id: dbResult.logId,
-            event_id: eventIdNum,
-            email,
-            action: dbResult.action,
+            action: dbResult.action === 'exit' ? 'out' : 'in',
+            in_time: dbResult.in_time ?? null,
+            out_time: dbResult.out_time ?? null,
             message,
-        }, 201);
+        });
     }
     catch (error) {
         console.error('Manual attendance error:', error);
@@ -140,3 +157,4 @@ const handler = async (event) => {
     }
 };
 exports.handler = handler;
+//# sourceMappingURL=index.js.map

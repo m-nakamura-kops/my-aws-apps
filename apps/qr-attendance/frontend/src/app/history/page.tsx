@@ -13,6 +13,7 @@ import Link from 'next/link';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import ErrorAlert from '@/components/ui/ErrorAlert';
 import TableSkeleton from '@/components/ui/TableSkeleton';
+import { formatDateTimeJst, isPresentTime } from '@/lib/datetime';
 
 interface AttendanceLog {
   log_id: number;
@@ -21,7 +22,7 @@ interface AttendanceLog {
   event_id: number;
   event_name: string;
   event_date: string;
-  in_time: string;
+  in_time: string | null;
   out_time: string | null;
   stay_minutes: number | null;
   staff_email: string;
@@ -97,16 +98,7 @@ export default function HistoryPage() {
     }
   };
 
-  const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleString('ja-JP', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+  const formatDateTime = (dateString: string | null | undefined) => formatDateTimeJst(dateString);
 
   const formatDuration = (minutes: number | null) => {
     if (minutes === null) return '-';
@@ -273,7 +265,7 @@ export default function HistoryPage() {
                           {formatDateTime(log.in_time)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {log.out_time ? formatDateTime(log.out_time) : <span className="text-gray-400">未退室</span>}
+                          {isPresentTime(log.out_time) ? formatDateTime(log.out_time) : <span className="text-gray-400">-</span>}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {formatDuration(log.stay_minutes)}

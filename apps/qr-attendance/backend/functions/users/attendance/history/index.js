@@ -3,13 +3,48 @@
  * 打刻履歴取得Lambda関数
  * GET /v1/users/attendance/history
  * 権限マトリクスに従い、利用者・スタッフ・管理者とも「自分の打刻履歴」のみ取得可能。
+ *
+ * - in_time が無い exit 専用行は除外（1入退室=1行モデル）
+ * - DATETIME は接続側で JST 壁時計文字列として返す
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
-const connection_1 = require('./shared/db/connection');
-const secrets_1 = require('./shared/db/secrets');
-const response_1 = require('./shared/utils/response');
-const auth_1 = require('./shared/utils/auth');
+const connection_1 = require("./shared/db/connection");
+const secrets_1 = require("./shared/db/secrets");
+const response_1 = require("./shared/utils/response");
+const auth_1 = require("./shared/utils/auth");
+/** NULL / Epoch / 不正値を API レスポンス上で null に正規化 */
+function normalizeDateTime(value) {
+    if (value == null || value === '')
+        return null;
+    const s = String(value).trim();
+    if (!s || s === 'null' || s.startsWith('0000-00-00'))
+        return null;
+    // Date オブジェクトや ISO 文字列も壁時計 YYYY-MM-DD HH:mm:ss に寄せる
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/);
+    if (m) {
+        const year = parseInt(m[1], 10);
+        if (year < 1980)
+            return null;
+        return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
+    }
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime()) || d.getFullYear() < 1980)
+        return null;
+    // 最終手段: Asia/Tokyo で整形
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Tokyo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+    }).formatToParts(d);
+    const get = (t) => parts.find((p) => p.type === t)?.value || '00';
+    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
+}
 const handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') {
         return (0, response_1.corsResponse)();
@@ -31,24 +66,22 @@ const handler = async (event) => {
         if (!requestEmail) {
             return (0, response_1.errorResponse)('UNAUTHORIZED', 'Authentication required', 401);
         }
-        // 権限マトリクス: 自分の打刻履歴の閲覧は全ロールとも本人のみ
         const emailFilter = requestEmail;
         const params = [];
-        let whereClause = '';
-        if (emailFilter) {
-            whereClause = ' WHERE al.email = ?';
-            params.push(emailFilter);
-        }
+        // 入室行のみ（in_time 必須）。旧 exit 単独行は履歴に出さない
+        let whereClause = " WHERE al.in_time IS NOT NULL AND (al.type IS NULL OR al.type = '' OR al.type = 'entry')";
+        whereClause += ' AND al.email = ?';
+        params.push(emailFilter);
         if (eventId) {
-            whereClause += whereClause ? ' AND al.event_id = ?' : ' WHERE al.event_id = ?';
+            whereClause += ' AND al.event_id = ?';
             params.push(eventId);
         }
         if (startDate) {
-            whereClause += whereClause ? ' AND al.in_time >= ?' : ' WHERE al.in_time >= ?';
+            whereClause += ' AND al.in_time >= ?';
             params.push(startDate);
         }
         if (endDate) {
-            whereClause += whereClause ? ' AND al.in_time <= ?' : ' WHERE al.in_time <= ?';
+            whereClause += ' AND al.in_time <= ?';
             params.push(endDate);
         }
         const limitInt = Math.min(1000, Math.max(1, limit));
@@ -87,13 +120,13 @@ const handler = async (event) => {
                 user_name: log.user_name,
                 event_id: log.event_id,
                 event_name: log.event_name,
-                event_date: log.event_date,
-                in_time: log.in_time,
-                out_time: log.out_time,
+                event_date: normalizeDateTime(log.event_date),
+                in_time: normalizeDateTime(log.in_time),
+                out_time: normalizeDateTime(log.out_time),
                 stay_minutes: log.stay_minutes,
                 staff_email: log.staff_email,
                 staff_name: log.staff_name,
-                created_at: log.created_at,
+                created_at: normalizeDateTime(log.created_at),
             })),
             pagination: {
                 total,
@@ -109,3 +142,4 @@ const handler = async (event) => {
     }
 };
 exports.handler = handler;
+//# sourceMappingURL=index.js.map

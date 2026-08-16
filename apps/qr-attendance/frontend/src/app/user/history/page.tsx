@@ -9,6 +9,7 @@ import Link from 'next/link';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import ErrorAlert from '@/components/ui/ErrorAlert';
 import TableSkeleton from '@/components/ui/TableSkeleton';
+import { formatDateTimeJst, isPresentTime } from '@/lib/datetime';
 
 interface AttendanceLog {
   log_id: number;
@@ -23,16 +24,6 @@ interface AttendanceLog {
   staff_email: string;
   staff_name: string;
   created_at: string;
-}
-
-function isPresentTime(v: unknown): boolean {
-  if (v == null || v === '') return false;
-  if (typeof v === 'number' && v === 0) return false;
-  const s = String(v).trim();
-  if (s === '' || s === 'null' || s === '0' || s.startsWith('0000-00-00')) return false;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime()) || d.getFullYear() < 1980) return false;
-  return true;
 }
 
 function HistoryPageContent() {
@@ -99,17 +90,7 @@ function HistoryPageContent() {
     }
   };
 
-  const formatDateTime = (dateString: string | null | undefined) => {
-    if (!isPresentTime(dateString)) return '-';
-    const date = new Date(String(dateString).trim());
-    return date.toLocaleString('ja-JP', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+  const formatDateTime = (dateString: string | null | undefined) => formatDateTimeJst(dateString);
 
   const formatDuration = (minutes: number | null | undefined) => {
     if (minutes == null || !Number.isFinite(minutes) || Number.isNaN(minutes) || minutes < 0) return '-';

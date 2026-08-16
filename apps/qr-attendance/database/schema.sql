@@ -129,35 +129,24 @@ FROM events e
 INNER JOIN registrations r ON e.event_id = r.event_id
 INNER JOIN users u ON r.email = u.email;
 
--- 打刻履歴詳細ビュー（entry 行と直後の exit 行を結合）
+-- 打刻履歴詳細ビュー（1入退室=1行: entry 行の in_time / out_time）
 CREATE OR REPLACE VIEW v_attendance_details AS
 SELECT
-    entry.log_id,
-    entry.email,
+    al.log_id,
+    al.email,
     u.name_kanji AS user_name,
-    entry.event_id,
+    al.event_id,
     e.event_name,
     e.event_date,
-    entry.in_time,
-    exit_row.out_time,
-    TIMESTAMPDIFF(MINUTE, entry.in_time, exit_row.out_time) AS stay_minutes,
-    entry.staff_email,
+    al.in_time,
+    al.out_time,
+    TIMESTAMPDIFF(MINUTE, al.in_time, al.out_time) AS stay_minutes,
+    al.staff_email,
     staff.name_kanji AS staff_name,
-    entry.created_at
-FROM attendance_logs entry
-INNER JOIN users u ON entry.email = u.email
-INNER JOIN events e ON entry.event_id = e.event_id
-INNER JOIN users staff ON entry.staff_email = staff.email
-LEFT JOIN attendance_logs exit_row
-  ON exit_row.event_id = entry.event_id
-  AND exit_row.email = entry.email
-  AND exit_row.type = 'exit'
-  AND exit_row.log_id = (
-    SELECT MIN(e2.log_id)
-    FROM attendance_logs e2
-    WHERE e2.event_id = entry.event_id
-      AND e2.email = entry.email
-      AND e2.type = 'exit'
-      AND e2.log_id > entry.log_id
-  )
-WHERE entry.type = 'entry';
+    al.created_at
+FROM attendance_logs al
+INNER JOIN users u ON al.email = u.email
+INNER JOIN events e ON al.event_id = e.event_id
+INNER JOIN users staff ON al.staff_email = staff.email
+WHERE al.in_time IS NOT NULL
+  AND (al.type IS NULL OR al.type = '' OR al.type = 'entry');

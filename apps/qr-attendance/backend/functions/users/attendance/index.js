@@ -40,10 +40,10 @@ exports.handler = void 0;
 const dayjs_1 = __importDefault(require("dayjs"));
 const utc_1 = __importDefault(require("dayjs/plugin/utc"));
 const timezone_1 = __importDefault(require("dayjs/plugin/timezone"));
-const connection_1 = require('./shared/db/connection');
-const secrets_1 = require('./shared/db/secrets');
-const response_1 = require('./shared/utils/response');
-const auth_1 = require('./shared/utils/auth');
+const connection_1 = require("./shared/db/connection");
+const secrets_1 = require("./shared/db/secrets");
+const response_1 = require("./shared/utils/response");
+const auth_1 = require("./shared/utils/auth");
 const crypto = __importStar(require("crypto"));
 dayjs_1.default.extend(utc_1.default);
 dayjs_1.default.extend(timezone_1.default);
@@ -122,15 +122,6 @@ function requireNonEmptyString(value, label) {
 }
 const USER_QR_VALID_MS = 10 * 60 * 1000;
 const QR_CLOCK_SKEW_MS = 60 * 1000;
-function rowType(latest) {
-    if (!latest || latest.type == null)
-        return '';
-    const t = latest.type;
-    if (typeof Buffer !== 'undefined' && Buffer.isBuffer(t)) {
-        return t.toString('utf8').trim().toLowerCase();
-    }
-    return String(t).trim().toLowerCase();
-}
 function isOutTimeEmpty(out) {
     if (out == null || out === '')
         return true;
@@ -189,29 +180,12 @@ async function punchResultFromDbState(pool, userEmail, eventId) {
     if (!latest) {
         throw new Error('No attendance row after punch');
     }
-    const t = rowType(latest);
-    if (t === 'exit') {
-        const [enRows] = (await (0, connection_1.withConnection)(pool, async (conn) => conn.execute(`SELECT log_id, in_time FROM attendance_logs WHERE email = ? AND event_id = ? AND type = 'entry' ORDER BY log_id DESC LIMIT 1`, [userEmail, eventId])));
-        const en = enRows[0];
+    if (!isOutTimeEmpty(latest.out_time)) {
         return {
             log_id: Number(latest.log_id),
             action: 'out',
-            in_time: en?.in_time ?? null,
+            in_time: latest.in_time ?? null,
             out_time: latest.out_time,
-            message: '退室打刻が完了しました',
-        };
-    }
-    // entry / レガシー: out_time が埋まっていれば退室済み（UPDATE 済みで exit 行より log_id が小さい場合）
-    if (!isOutTimeEmpty(latest.out_time)) {
-        const [exRows] = (await (0, connection_1.withConnection)(pool, async (conn) => conn.execute(`SELECT log_id, out_time FROM attendance_logs WHERE email = ? AND event_id = ? AND type = 'exit' ORDER BY log_id DESC LIMIT 1`, [userEmail, eventId])));
-        const ex = exRows[0];
-        const [enRows] = (await (0, connection_1.withConnection)(pool, async (conn) => conn.execute(`SELECT log_id, in_time FROM attendance_logs WHERE email = ? AND event_id = ? AND type = 'entry' ORDER BY log_id DESC LIMIT 1`, [userEmail, eventId])));
-        const en = enRows[0];
-        return {
-            log_id: ex ? Number(ex.log_id) : Number(latest.log_id),
-            action: 'out',
-            in_time: (en?.in_time ?? latest.in_time),
-            out_time: (ex?.out_time ?? latest.out_time),
             message: '退室打刻が完了しました',
         };
     }
@@ -245,15 +219,12 @@ async function punchEntryExitToggle(pool, userEmail, eventId, staffEmail, retryD
                 await conn.rollback();
                 return punchEntryExitToggle(pool, userEmail, eventId, staffEmailBound, retryDepth + 1);
             }
-            const outTimeInsert = requireJstDatetimeForBind(outTimeForDb, 'out_time (checkout INSERT exit row)');
-            await conn.execute(`INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
-         VALUES (?, ?, 'exit', NULL, ?, ?)`, [userEmail, eventId, outTimeInsert, staffEmailBound]);
             await conn.commit();
             return {
                 log_id: entryLogId,
                 action: 'out',
                 in_time: entryInTime,
-                out_time: outTimeInsert,
+                out_time: outTimeForDb,
                 message: '退室打刻が完了しました',
             };
         }
@@ -380,3 +351,4 @@ const handler = async (event) => {
     }
 };
 exports.handler = handler;
+//# sourceMappingURL=index.js.map

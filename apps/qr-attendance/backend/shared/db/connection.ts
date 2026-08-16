@@ -58,10 +58,18 @@ export function initDB(config: DBConfig): mysql.Pool {
     idleTimeout: 60000,
     enableKeepAlive: true,
     keepAliveInitialDelay: 0,
+    // DATETIME は JST 壁時計として保存・返却（UTC 変換による表示ズレを防ぐ）
+    timezone: '+09:00',
+    dateStrings: true,
     ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
   };
 
   pool = mysql.createPool(poolConfig);
+
+  // DATETIME の CURRENT_TIMESTAMP も JST 壁時計になるようセッション TZ を固定
+  pool.on('connection', (connection) => {
+    connection.query("SET time_zone = '+09:00'");
+  });
 
   return pool;
 }

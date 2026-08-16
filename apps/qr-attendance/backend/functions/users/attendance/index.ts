@@ -3,8 +3,8 @@
  * POST /v1/users/attendance
  *
  * 退室時: 当該イベント・ユーザーで「in_time IS NOT NULL かつ out_time IS NULL」の行を UPDATE し out_time を埋める。
- *         併せて type=exit の行を INSERT（v_attendance_details の結合用）。
- * 入室時: 上記の開いている行が無ければ type=entry の行を INSERT（最新行の type だけでは判定しない）。
+ *         新規行は INSERT しない（1入退室 = 1レコード）。
+ * 入室時: 開いている行が無ければ type=entry の行を INSERT。
  * 時刻: すべて JST（Asia/Tokyo）の YYYY-MM-DD HH:mm:ss で RDS DATETIME と整合。
  */
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
@@ -98,15 +98,6 @@ function requireNonEmptyString(value: unknown, label: string): string {
 const USER_QR_VALID_MS = 10 * 60 * 1000;
 const QR_CLOCK_SKEW_MS = 60 * 1000;
 
-function rowType(latest: Record<string, unknown> | undefined): string {
-  if (!latest || latest.type == null) return '';
-  const t = latest.type as unknown;
-  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(t)) {
-    return t.toString('utf8').trim().toLowerCase();
-  }
-  return String(t).trim().toLowerCase();
-}
-
 function isOutTimeEmpty(out: unknown): boolean {
   if (out == null || out === '') return true;
   if (out instanceof Date) return false;
@@ -189,44 +180,12 @@ async function punchResultFromDbState(pool: Pool, userEmail: string, eventId: nu
   if (!latest) {
     throw new Error('No attendance row after punch');
   }
-  const t = rowType(latest);
-  if (t === 'exit') {
-    const [enRows] = (await withConnection(pool, async (conn) =>
-      conn.execute(
-        `SELECT log_id, in_time FROM attendance_logs WHERE email = ? AND event_id = ? AND type = 'entry' ORDER BY log_id DESC LIMIT 1`,
-        [userEmail, eventId]
-      )
-    )) as any[];
-    const en = enRows[0];
+  if (!isOutTimeEmpty(latest.out_time)) {
     return {
       log_id: Number(latest.log_id),
       action: 'out',
-      in_time: en?.in_time ?? null,
+      in_time: (latest.in_time as string | null) ?? null,
       out_time: latest.out_time as string | null,
-      message: '退室打刻が完了しました',
-    };
-  }
-  // entry / レガシー: out_time が埋まっていれば退室済み（UPDATE 済みで exit 行より log_id が小さい場合）
-  if (!isOutTimeEmpty(latest.out_time)) {
-    const [exRows] = (await withConnection(pool, async (conn) =>
-      conn.execute(
-        `SELECT log_id, out_time FROM attendance_logs WHERE email = ? AND event_id = ? AND type = 'exit' ORDER BY log_id DESC LIMIT 1`,
-        [userEmail, eventId]
-      )
-    )) as any[];
-    const ex = exRows[0];
-    const [enRows] = (await withConnection(pool, async (conn) =>
-      conn.execute(
-        `SELECT log_id, in_time FROM attendance_logs WHERE email = ? AND event_id = ? AND type = 'entry' ORDER BY log_id DESC LIMIT 1`,
-        [userEmail, eventId]
-      )
-    )) as any[];
-    const en = enRows[0];
-    return {
-      log_id: ex ? Number(ex.log_id) : Number(latest.log_id),
-      action: 'out',
-      in_time: (en?.in_time ?? latest.in_time) as string | null,
-      out_time: (ex?.out_time ?? latest.out_time) as string | null,
       message: '退室打刻が完了しました',
     };
   }
@@ -277,20 +236,13 @@ async function punchEntryExitToggle(
         return punchEntryExitToggle(pool, userEmail, eventId, staffEmailBound, retryDepth + 1);
       }
 
-      const outTimeInsert = requireJstDatetimeForBind(outTimeForDb, 'out_time (checkout INSERT exit row)');
-      await conn.execute(
-        `INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
-         VALUES (?, ?, 'exit', NULL, ?, ?)`,
-        [userEmail, eventId, outTimeInsert, staffEmailBound]
-      );
-
       await conn.commit();
 
       return {
         log_id: entryLogId,
         action: 'out',
         in_time: entryInTime,
-        out_time: outTimeInsert,
+        out_time: outTimeForDb,
         message: '退室打刻が完了しました',
       };
     } catch (e: any) {
