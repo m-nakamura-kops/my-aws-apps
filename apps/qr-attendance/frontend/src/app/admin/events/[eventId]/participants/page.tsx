@@ -14,6 +14,7 @@ import Link from 'next/link';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import ErrorAlert from '@/components/ui/ErrorAlert';
 import LoadingButton from '@/components/ui/LoadingButton';
+import { isPresentTime, formatTimeOnlyJst } from '@/lib/datetime';
 
 interface Participant {
   email: string;
@@ -25,15 +26,6 @@ interface Participant {
   registration_date: string;
   in_time: string | null;
   out_time: string | null;
-}
-
-function isPresentTime(v: string | null | undefined): boolean {
-  if (v == null) return false;
-  const s = String(v).trim();
-  if (s === '' || s === 'null' || s.startsWith('0000-00-00')) return false;
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime()) || d.getFullYear() < 1980) return false;
-  return true;
 }
 
 function EventParticipantsPageContent() {
@@ -111,13 +103,7 @@ function EventParticipantsPageContent() {
     });
   };
 
-  const formatTimeOnly = (dateString: string | null | undefined) => {
-    if (!isPresentTime(dateString ?? null)) return '-';
-    return new Date(String(dateString).trim()).toLocaleTimeString('ja-JP', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+  const formatTimeOnly = (dateString: string | null | undefined) => formatTimeOnlyJst(dateString);
 
   const getRoleName = (roleFlag: number | null) => {
     if (roleFlag === null) return '-';

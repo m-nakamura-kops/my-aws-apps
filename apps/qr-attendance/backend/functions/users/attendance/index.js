@@ -32,86 +32,19 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
-const dayjs_1 = __importDefault(require("dayjs"));
-const utc_1 = __importDefault(require("dayjs/plugin/utc"));
-const timezone_1 = __importDefault(require("dayjs/plugin/timezone"));
-const connection_1 = require("./shared/db/connection");
-const secrets_1 = require("./shared/db/secrets");
-const response_1 = require("./shared/utils/response");
-const auth_1 = require("./shared/utils/auth");
+const connection_1 = require('./shared/db/connection');
+const secrets_1 = require('./shared/db/secrets');
+const response_1 = require('./shared/utils/response');
+const auth_1 = require('./shared/utils/auth');
 const crypto = __importStar(require("crypto"));
-dayjs_1.default.extend(utc_1.default);
-dayjs_1.default.extend(timezone_1.default);
-const TZ_TOKYO = 'Asia/Tokyo';
-/** MySQL DATETIME として安全な形式（厳格） */
-const MYSQL_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 /**
- * JST の壁時計を `YYYY-MM-DD HH:mm:ss` で返す。
- * 空・不正・Invalid Date のときは再取得 → それでもダメなら UTC+9 のフォールバック。
- * out_time / in_time に空文字が入らないようにする。
+ * 同一ユーザー・イベントで、この秒数以内の連続スキャンは「同じ1回のスキャン」とみなす。
+ * カメラが同じQRを複数フレームで読む／利用者QRが更新されて debounce が効かない場合の
+ * 「入室した直後に即退室」「退室した直後に再入室」を防ぐ。
  */
-function nowJstMysqlDatetime() {
-    const primary = (0, dayjs_1.default)().tz(TZ_TOKYO).format('YYYY-MM-DD HH:mm:ss');
-    if (isValidMysqlDatetimeString(primary)) {
-        return primary;
-    }
-    const retry = (0, dayjs_1.default)().tz(TZ_TOKYO).format('YYYY-MM-DD HH:mm:ss');
-    if (isValidMysqlDatetimeString(retry)) {
-        return retry;
-    }
-    const fallbackUtcPlus9 = dayjs_1.default.utc().add(9, 'hour').format('YYYY-MM-DD HH:mm:ss');
-    if (isValidMysqlDatetimeString(fallbackUtcPlus9)) {
-        return fallbackUtcPlus9;
-    }
-    const last = (0, dayjs_1.default)().format('YYYY-MM-DD HH:mm:ss');
-    if (isValidMysqlDatetimeString(last)) {
-        return last;
-    }
-    throw new Error('Failed to compute JST datetime for MySQL');
-}
-function isValidMysqlDatetimeString(s) {
-    if (s === undefined || s === null || typeof s !== 'string')
-        return false;
-    const t = s.trim();
-    if (t === '' || t.includes('Invalid'))
-        return false;
-    if (!MYSQL_DATETIME_RE.test(t))
-        return false;
-    const [datePart, timePart] = t.split(' ');
-    if (!datePart || !timePart)
-        return false;
-    const [Y, M, D] = datePart.split('-').map((x) => parseInt(x, 10));
-    const [h, m, sec] = timePart.split(':').map((x) => parseInt(x, 10));
-    if (Number.isNaN(Y) ||
-        Number.isNaN(M) ||
-        Number.isNaN(D) ||
-        Number.isNaN(h) ||
-        Number.isNaN(m) ||
-        Number.isNaN(sec)) {
-        return false;
-    }
-    if (Y < 1970 || Y > 2100 || M < 1 || M > 12 || D < 1 || D > 31)
-        return false;
-    if (h > 23 || m > 59 || sec > 59)
-        return false;
-    return true;
-}
-/** UPDATE / INSERT 直前に必ず通す（空・undefined を絶対にバインドしない） */
-function requireJstDatetimeForBind(candidate, label) {
-    if (candidate !== undefined && candidate !== null && isValidMysqlDatetimeString(candidate)) {
-        return candidate.trim();
-    }
-    const fresh = nowJstMysqlDatetime();
-    if (!isValidMysqlDatetimeString(fresh)) {
-        throw new Error(`Invalid datetime after refresh for ${label}`);
-    }
-    return fresh;
-}
+const DEDUP_WINDOW_SECONDS = 15;
 /** VARCHAR 系プレースホルダ用（undefined でプレースホルダがずれないよう常に文字列） */
 function requireNonEmptyString(value, label) {
     const s = value === undefined || value === null ? '' : String(value).trim();
@@ -139,10 +72,12 @@ async function fetchLatestAttendanceRow(pool, userEmail, eventId) {
 /**
  * 当該イベント・ユーザーで「入室済み（in_time あり）かつ未退室（out_time NULL）」の行を1件取得。
  * 最新行の type に依存せず、開いているセッションのみ退室対象とする（初回が退室になる誤判定を防ぐ）。
+ * 経過秒は DB の NOW() で算出し、Lambda 側の時計と混ぜない。
  */
 async function fetchOpenSessionRow(pool, userEmail, eventId) {
     return (0, connection_1.withConnection)(pool, async (conn) => {
-        const [rows] = (await conn.execute(`SELECT log_id, in_time FROM attendance_logs
+        const [rows] = (await conn.execute(`SELECT log_id, in_time, TIMESTAMPDIFF(SECOND, in_time, NOW()) AS in_age_seconds
+       FROM attendance_logs
        WHERE email = ? AND event_id = ?
          AND in_time IS NOT NULL
          AND out_time IS NULL
@@ -151,7 +86,41 @@ async function fetchOpenSessionRow(pool, userEmail, eventId) {
         const r = rows[0];
         if (!r)
             return null;
-        return { log_id: Number(r.log_id), in_time: r.in_time ?? null };
+        return {
+            log_id: Number(r.log_id),
+            in_time: r.in_time ?? null,
+            in_age_seconds: Number(r.in_age_seconds ?? 0),
+        };
+    });
+}
+/** 直近の「退室済み」行を1件取得（退室直後の重複スキャンで新規入室 INSERT を防ぐため） */
+async function fetchLatestClosedSessionRow(pool, userEmail, eventId) {
+    return (0, connection_1.withConnection)(pool, async (conn) => {
+        const [rows] = (await conn.execute(`SELECT log_id, in_time, out_time, TIMESTAMPDIFF(SECOND, out_time, NOW()) AS out_age_seconds
+       FROM attendance_logs
+       WHERE email = ? AND event_id = ?
+         AND out_time IS NOT NULL
+       ORDER BY log_id DESC
+       LIMIT 1`, [userEmail, eventId]));
+        const r = rows[0];
+        if (!r)
+            return null;
+        return {
+            log_id: Number(r.log_id),
+            in_time: r.in_time ?? null,
+            out_time: r.out_time ?? null,
+            out_age_seconds: Number(r.out_age_seconds ?? 0),
+        };
+    });
+}
+/** 書き込み後の確定値を DB から読み直す（JST 文字列のまま返す） */
+async function fetchRowById(pool, logId) {
+    return (0, connection_1.withConnection)(pool, async (conn) => {
+        const [rows] = (await conn.execute('SELECT in_time, out_time FROM attendance_logs WHERE log_id = ? LIMIT 1', [logId]));
+        const r = rows[0];
+        if (!r)
+            return null;
+        return { in_time: r.in_time ?? null, out_time: r.out_time ?? null };
     });
 }
 async function ensureRegistrationForWalkIn(pool, userEmail, eventId) {
@@ -204,27 +173,37 @@ async function punchEntryExitToggle(pool, userEmail, eventId, staffEmail, retryD
     const staffEmailBound = requireNonEmptyString(staffEmail, 'staff_email');
     if (openSession) {
         const entryLogId = openSession.log_id;
-        const entryInTime = openSession.in_time;
-        const outTimeForDb = requireJstDatetimeForBind(nowJstMysqlDatetime(), 'out_time (checkout UPDATE)');
+        // 入室直後（または in_time が未来にズレている）場合は同一スキャンの重複とみなし、退室にしない
+        if (openSession.in_age_seconds < DEDUP_WINDOW_SECONDS) {
+            return {
+                log_id: entryLogId,
+                action: 'in',
+                in_time: openSession.in_time,
+                message: '入室打刻が完了しました',
+            };
+        }
         const conn = await pool.getConnection();
         try {
             await conn.beginTransaction();
-            // 開いているセッション行のみ更新（in_time 必須・out_time NULL を再確認）
+            // 開いているセッション行のみ更新。in_time は絶対に書き換えない。
+            // out_time は GREATEST(NOW(), in_time) で必ず in_time 以降になり、逆転しない。
             const [upd] = (await conn.execute(`UPDATE attendance_logs
-         SET out_time = ?, staff_email = ?, updated_at = CURRENT_TIMESTAMP
+         SET out_time = GREATEST(NOW(), in_time), staff_email = ?, updated_at = CURRENT_TIMESTAMP
          WHERE log_id = ? AND email = ? AND event_id = ?
            AND in_time IS NOT NULL
-           AND out_time IS NULL`, [outTimeForDb, staffEmailBound, entryLogId, userEmail, eventId]));
+           AND out_time IS NULL`, [staffEmailBound, entryLogId, userEmail, eventId]));
             if (upd.affectedRows === 0) {
+                // 並行リクエストが先に閉じた場合は DB の現在状態を返す（新規 INSERT はしない）
                 await conn.rollback();
-                return punchEntryExitToggle(pool, userEmail, eventId, staffEmailBound, retryDepth + 1);
+                return punchResultFromDbState(pool, userEmail, eventId);
             }
             await conn.commit();
+            const saved = await fetchRowById(pool, entryLogId);
             return {
                 log_id: entryLogId,
                 action: 'out',
-                in_time: entryInTime,
-                out_time: outTimeForDb,
+                in_time: saved?.in_time ?? openSession.in_time,
+                out_time: saved?.out_time ?? null,
                 message: '退室打刻が完了しました',
             };
         }
@@ -242,16 +221,28 @@ async function punchEntryExitToggle(pool, userEmail, eventId, staffEmail, retryD
             conn.release();
         }
     }
-    // 入室: in_time は DATETIME 文字列、out_time は SQL の NULL（プレースホルダは使わない）
-    const inTimeForDb = requireJstDatetimeForBind(nowJstMysqlDatetime(), 'in_time (checkin INSERT)');
+    // 退室直後の重複スキャンでは新しい入室行を作らず、直前の退室結果を返す
+    const latestClosed = await fetchLatestClosedSessionRow(pool, userEmail, eventId);
+    if (latestClosed && latestClosed.out_age_seconds < DEDUP_WINDOW_SECONDS) {
+        return {
+            log_id: latestClosed.log_id,
+            action: 'out',
+            in_time: latestClosed.in_time,
+            out_time: latestClosed.out_time,
+            message: '退室打刻が完了しました',
+        };
+    }
+    // 入室: in_time も DB の NOW()（JST）を使い、Lambda 側の時計は使わない
     try {
         return await (0, connection_1.withConnection)(pool, async (conn) => {
             const [result] = (await conn.execute(`INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
-         VALUES (?, ?, 'entry', ?, NULL, ?)`, [userEmail, eventId, inTimeForDb, staffEmailBound]));
+         VALUES (?, ?, 'entry', NOW(), NULL, ?)`, [userEmail, eventId, staffEmailBound]));
+            const logId = Number(result.insertId);
+            const [rows] = (await conn.execute('SELECT in_time FROM attendance_logs WHERE log_id = ? LIMIT 1', [logId]));
             return {
-                log_id: result.insertId,
+                log_id: logId,
                 action: 'in',
-                in_time: inTimeForDb,
+                in_time: rows[0]?.in_time ?? null,
                 message: '入室打刻が完了しました',
             };
         });
@@ -351,4 +342,3 @@ const handler = async (event) => {
     }
 };
 exports.handler = handler;
-//# sourceMappingURL=index.js.map

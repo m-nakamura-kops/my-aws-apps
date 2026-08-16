@@ -93,4 +93,3 @@ async function closeDB() {
         pool = null;
     }
 }
-//# sourceMappingURL=connection.js.map

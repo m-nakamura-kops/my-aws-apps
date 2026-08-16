@@ -47,10 +47,18 @@ function isInvalidDatetime(v: unknown): boolean {
   return false;
 }
 
+/**
+ * DB の DATETIME は JST の壁時計。オフセット無しで返すとクライアントが UTC と解釈して
+ * +9 時間ずれるため、必ず +09:00 付きの ISO8601 にして返す。
+ */
 function toIsoOrNull(v: unknown): string | null {
   if (isInvalidDatetime(v)) return null;
-  if (v instanceof Date) return v.toISOString();
-  const d = new Date(String(v).trim());
+  const s = v instanceof Date ? '' : String(v).trim();
+  const wall = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (wall) {
+    return `${wall[1]}-${wall[2]}-${wall[3]}T${wall[4]}:${wall[5]}:${wall[6] ?? '00'}+09:00`;
+  }
+  const d = v instanceof Date ? v : new Date(s);
   if (Number.isNaN(d.getTime()) || d.getFullYear() < 1980) return null;
   return d.toISOString();
 }

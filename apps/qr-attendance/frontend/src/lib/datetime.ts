@@ -43,3 +43,26 @@ export function formatDateTimeJst(dateString: string | null | undefined): string
     minute: '2-digit',
   });
 }
+
+/**
+ * 時刻のみ（HH:mm）を JST で整形。
+ * オフセット付き ISO はブラウザのタイムゾーンに依らず Asia/Tokyo で表示し、
+ * オフセット無しの "YYYY-MM-DD HH:mm:ss" は JST 壁時計としてそのまま表示する。
+ */
+export function formatTimeOnlyJst(dateString: string | null | undefined): string {
+  if (!isPresentTime(dateString)) return '-';
+  const s = String(dateString).trim();
+
+  const wall = s.match(/^\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/);
+  if (wall && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) {
+    return `${wall[1]}:${wall[2]}`;
+  }
+
+  const date = new Date(s);
+  if (Number.isNaN(date.getTime()) || date.getFullYear() < 1980) return '-';
+  return date.toLocaleTimeString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}

@@ -2,8 +2,9 @@
  * 手動打刻実行
  * POST /v1/attendance/manual
  * 権限: 管理者(3) または スタッフ(2) のみ。event_id と email で打刻。
- * 入室: 新規 INSERT（type=entry, in_time=JST, out_time=NULL）。
+ * 入室: 新規 INSERT（type=entry, in_time=NOW(), out_time=NULL）。
  * 退室: 未退室の最新入室行の out_time を UPDATE（新規 INSERT しない）。
+ * 時刻: DB の NOW()（セッション time_zone は +09:00）のみを使い、out_time は必ず in_time 以降。
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
@@ -12,21 +13,6 @@ import { initDBFromSecrets } from '../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../shared/utils/response';
 import { checkStaffOrAdminPermission } from '../../../shared/utils/auth';
 import { UserRole } from '../../../shared/utils/role-check';
-
-function nowJstMysqlDatetime(): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(new Date());
-  const get = (t: string) => parts.find((p) => p.type === t)?.value || '00';
-  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
-}
 
 type DbResult =
   | { ok: true; logId: number | null; action: 'entry' | 'exit'; in_time?: string | null; out_time?: string | null }
@@ -92,7 +78,6 @@ export const handler = async (
     const isExit = actionParam === 'exit' || actionParam === 'out';
 
     const pool = getDB();
-    const nowJst = nowJstMysqlDatetime();
 
     const dbResult = await withConnection(pool, async (conn): Promise<DbResult> => {
       const [events] = (await conn.execute('SELECT event_id FROM events WHERE event_id = ?', [
@@ -140,18 +125,23 @@ export const handler = async (
           };
         }
         const open = openRows[0];
+        // in_time は書き換えず、out_time は GREATEST(NOW(), in_time) で逆転を防ぐ
         await conn.execute(
           `UPDATE attendance_logs
-           SET out_time = ?, staff_email = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE log_id = ? AND out_time IS NULL`,
-          [nowJst, staffEmail, open.log_id]
+           SET out_time = GREATEST(NOW(), in_time), staff_email = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE log_id = ? AND in_time IS NOT NULL AND out_time IS NULL`,
+          [staffEmail, open.log_id]
         );
+        const [saved] = (await conn.execute(
+          'SELECT in_time, out_time FROM attendance_logs WHERE log_id = ? LIMIT 1',
+          [open.log_id]
+        )) as any[];
         return {
           ok: true,
           logId: Number(open.log_id),
           action: 'exit',
-          in_time: open.in_time ?? null,
-          out_time: nowJst,
+          in_time: saved[0]?.in_time ?? open.in_time ?? null,
+          out_time: saved[0]?.out_time ?? null,
         };
       }
 
@@ -172,11 +162,15 @@ export const handler = async (
       try {
         const [result] = (await conn.execute(
           `INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
-           VALUES (?, ?, 'entry', ?, NULL, ?)`,
-          [email, eventIdNum, nowJst, staffEmail]
+           VALUES (?, ?, 'entry', NOW(), NULL, ?)`,
+          [email, eventIdNum, staffEmail]
         )) as any[];
         const logId = result?.insertId ?? null;
-        return { ok: true, logId, action: 'entry', in_time: nowJst, out_time: null };
+        const [saved] = (await conn.execute(
+          'SELECT in_time FROM attendance_logs WHERE log_id = ? LIMIT 1',
+          [logId]
+        )) as any[];
+        return { ok: true, logId, action: 'entry', in_time: saved[0]?.in_time ?? null, out_time: null };
       } catch (insertErr: any) {
         const code = insertErr?.code ?? insertErr?.errno;
         if (code === 'ER_DUP_ENTRY' || code === 1062) {

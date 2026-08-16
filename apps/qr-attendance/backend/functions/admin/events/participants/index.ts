@@ -26,10 +26,18 @@ function isInvalidDatetime(v: unknown): boolean {
   return false;
 }
 
-function toIsoOrNull(v: unknown): string | null {
+/**
+ * DB の DATETIME は JST の壁時計。オフセット無しで返すとクライアントが UTC と解釈して
+ * +9 時間ずれるため、必ず +09:00 付きの ISO8601 にして返す。
+ */
+function toJstIsoOrNull(v: unknown): string | null {
   if (isInvalidDatetime(v)) return null;
-  if (v instanceof Date) return v.toISOString();
-  const d = new Date(String(v).trim());
+  const s = v instanceof Date ? '' : String(v).trim();
+  const wall = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (wall) {
+    return `${wall[1]}-${wall[2]}-${wall[3]}T${wall[4]}:${wall[5]}:${wall[6] ?? '00'}+09:00`;
+  }
+  const d = v instanceof Date ? v : new Date(s);
   if (Number.isNaN(d.getTime()) || d.getFullYear() < 1980) return null;
   return d.toISOString();
 }
@@ -108,15 +116,16 @@ export const handler = async (
             u.tel,
             u.org_id,
             u.role_flag,
-            (SELECT al.in_time FROM attendance_logs al
-              WHERE al.event_id = vp.event_id AND al.email = vp.email
-                AND al.in_time IS NOT NULL
-              ORDER BY al.log_id DESC LIMIT 1) AS in_time,
-            (SELECT MAX(al.out_time) FROM attendance_logs al
-              WHERE al.event_id = vp.event_id AND al.email = vp.email
-                AND al.out_time IS NOT NULL) AS out_time
+            al.in_time,
+            al.out_time
           FROM v_event_participants vp
           INNER JOIN users u ON u.email = vp.email
+          LEFT JOIN attendance_logs al ON al.log_id = (
+            SELECT al2.log_id FROM attendance_logs al2
+            WHERE al2.event_id = vp.event_id AND al2.email = vp.email
+              AND al2.in_time IS NOT NULL
+            ORDER BY al2.log_id DESC LIMIT 1
+          )
           WHERE vp.event_id = ?
           ORDER BY vp.registration_date DESC
           LIMIT ${limit} OFFSET ${offset}`,
@@ -141,15 +150,16 @@ export const handler = async (
             u.tel,
             u.org_id,
             u.role_flag,
-            (SELECT al.in_time FROM attendance_logs al
-              WHERE al.event_id = vp.event_id AND al.email = vp.email
-                AND al.in_time IS NOT NULL
-              ORDER BY al.log_id DESC LIMIT 1) AS in_time,
-            (SELECT MAX(al.out_time) FROM attendance_logs al
-              WHERE al.event_id = vp.event_id AND al.email = vp.email
-                AND al.out_time IS NOT NULL) AS out_time
+            al.in_time,
+            al.out_time
           FROM v_event_participants vp
           INNER JOIN users u ON u.email = vp.email
+          LEFT JOIN attendance_logs al ON al.log_id = (
+            SELECT al2.log_id FROM attendance_logs al2
+            WHERE al2.event_id = vp.event_id AND al2.email = vp.email
+              AND al2.in_time IS NOT NULL
+            ORDER BY al2.log_id DESC LIMIT 1
+          )
           WHERE vp.event_id = ? AND vp.email = ?
           LIMIT 1`,
           [eventId, requestEmail]
@@ -166,8 +176,8 @@ export const handler = async (
         org_id: row.org_id ?? null,
         role_flag: row.role_flag ?? null,
         registration_date: row.registration_date,
-        in_time: toIsoOrNull(row.in_time),
-        out_time: toIsoOrNull(row.out_time),
+        in_time: toJstIsoOrNull(row.in_time),
+        out_time: toJstIsoOrNull(row.out_time),
       }));
 
       return {

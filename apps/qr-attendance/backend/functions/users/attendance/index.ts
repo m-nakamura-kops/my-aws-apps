@@ -3,88 +3,27 @@
  * POST /v1/users/attendance
  *
  * 退室時: 当該イベント・ユーザーで「in_time IS NOT NULL かつ out_time IS NULL」の行を UPDATE し out_time を埋める。
- *         新規行は INSERT しない（1入退室 = 1レコード）。
+ *         新規行は INSERT しない（1入退室 = 1レコード）。in_time は一切上書きしない。
  * 入室時: 開いている行が無ければ type=entry の行を INSERT。
- * 時刻: すべて JST（Asia/Tokyo）の YYYY-MM-DD HH:mm:ss で RDS DATETIME と整合。
+ * 時刻: DB の NOW() のみを唯一の時計とする（セッション time_zone は +09:00 に固定済み）。
+ *       Lambda 側の new Date() は打刻時刻に使わないため、数秒のズレや逆転が発生しない。
+ * 逆転防止: out_time は GREATEST(NOW(), in_time) で必ず in_time 以降になる。
+ * 連打防止: 直近 DEDUP_WINDOW_SECONDS 秒以内の同一ユーザー・イベントの打刻は同じスキャンとみなし、
+ *           入室直後の即時退室や、退室直後の再入室 INSERT を行わない。
  */
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import dayjs from 'dayjs';
-import utc from 'dayjs/plugin/utc';
-import timezone from 'dayjs/plugin/timezone';
 import { getDB, withConnection, type Pool } from '../../../shared/db/connection';
 import { initDBFromSecrets } from '../../../shared/db/secrets';
 import { successResponse, errorResponse, corsResponse } from '../../../shared/utils/response';
 import { checkStaffOrAdminPermission } from '../../../shared/utils/auth';
 import * as crypto from 'crypto';
 
-dayjs.extend(utc);
-dayjs.extend(timezone);
-
-const TZ_TOKYO = 'Asia/Tokyo';
-
-/** MySQL DATETIME として安全な形式（厳格） */
-const MYSQL_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
-
 /**
- * JST の壁時計を `YYYY-MM-DD HH:mm:ss` で返す。
- * 空・不正・Invalid Date のときは再取得 → それでもダメなら UTC+9 のフォールバック。
- * out_time / in_time に空文字が入らないようにする。
+ * 同一ユーザー・イベントで、この秒数以内の連続スキャンは「同じ1回のスキャン」とみなす。
+ * カメラが同じQRを複数フレームで読む／利用者QRが更新されて debounce が効かない場合の
+ * 「入室した直後に即退室」「退室した直後に再入室」を防ぐ。
  */
-function nowJstMysqlDatetime(): string {
-  const primary = dayjs().tz(TZ_TOKYO).format('YYYY-MM-DD HH:mm:ss');
-  if (isValidMysqlDatetimeString(primary)) {
-    return primary;
-  }
-  const retry = dayjs().tz(TZ_TOKYO).format('YYYY-MM-DD HH:mm:ss');
-  if (isValidMysqlDatetimeString(retry)) {
-    return retry;
-  }
-  const fallbackUtcPlus9 = dayjs.utc().add(9, 'hour').format('YYYY-MM-DD HH:mm:ss');
-  if (isValidMysqlDatetimeString(fallbackUtcPlus9)) {
-    return fallbackUtcPlus9;
-  }
-  const last = dayjs().format('YYYY-MM-DD HH:mm:ss');
-  if (isValidMysqlDatetimeString(last)) {
-    return last;
-  }
-  throw new Error('Failed to compute JST datetime for MySQL');
-}
-
-function isValidMysqlDatetimeString(s: unknown): s is string {
-  if (s === undefined || s === null || typeof s !== 'string') return false;
-  const t = s.trim();
-  if (t === '' || t.includes('Invalid')) return false;
-  if (!MYSQL_DATETIME_RE.test(t)) return false;
-  const [datePart, timePart] = t.split(' ');
-  if (!datePart || !timePart) return false;
-  const [Y, M, D] = datePart.split('-').map((x) => parseInt(x, 10));
-  const [h, m, sec] = timePart.split(':').map((x) => parseInt(x, 10));
-  if (
-    Number.isNaN(Y) ||
-    Number.isNaN(M) ||
-    Number.isNaN(D) ||
-    Number.isNaN(h) ||
-    Number.isNaN(m) ||
-    Number.isNaN(sec)
-  ) {
-    return false;
-  }
-  if (Y < 1970 || Y > 2100 || M < 1 || M > 12 || D < 1 || D > 31) return false;
-  if (h > 23 || m > 59 || sec > 59) return false;
-  return true;
-}
-
-/** UPDATE / INSERT 直前に必ず通す（空・undefined を絶対にバインドしない） */
-function requireJstDatetimeForBind(candidate: string | undefined | null, label: string): string {
-  if (candidate !== undefined && candidate !== null && isValidMysqlDatetimeString(candidate)) {
-    return candidate.trim();
-  }
-  const fresh = nowJstMysqlDatetime();
-  if (!isValidMysqlDatetimeString(fresh)) {
-    throw new Error(`Invalid datetime after refresh for ${label}`);
-  }
-  return fresh;
-}
+const DEDUP_WINDOW_SECONDS = 15;
 
 /** VARCHAR 系プレースホルダ用（undefined でプレースホルダがずれないよう常に文字列） */
 function requireNonEmptyString(value: unknown, label: string): string {
@@ -127,18 +66,35 @@ async function fetchLatestAttendanceRow(
   });
 }
 
+type OpenSessionRow = {
+  log_id: number;
+  in_time: string | null;
+  /** DB の NOW() 基準で in_time からの経過秒。負値は in_time が未来（時計ズレ）を意味する */
+  in_age_seconds: number;
+};
+
+type ClosedSessionRow = {
+  log_id: number;
+  in_time: string | null;
+  out_time: string | null;
+  /** DB の NOW() 基準で out_time からの経過秒 */
+  out_age_seconds: number;
+};
+
 /**
  * 当該イベント・ユーザーで「入室済み（in_time あり）かつ未退室（out_time NULL）」の行を1件取得。
  * 最新行の type に依存せず、開いているセッションのみ退室対象とする（初回が退室になる誤判定を防ぐ）。
+ * 経過秒は DB の NOW() で算出し、Lambda 側の時計と混ぜない。
  */
 async function fetchOpenSessionRow(
   pool: Pool,
   userEmail: string,
   eventId: number
-): Promise<{ log_id: number; in_time: string | null } | null> {
+): Promise<OpenSessionRow | null> {
   return withConnection(pool, async (conn) => {
     const [rows] = (await conn.execute(
-      `SELECT log_id, in_time FROM attendance_logs
+      `SELECT log_id, in_time, TIMESTAMPDIFF(SECOND, in_time, NOW()) AS in_age_seconds
+       FROM attendance_logs
        WHERE email = ? AND event_id = ?
          AND in_time IS NOT NULL
          AND out_time IS NULL
@@ -148,7 +104,54 @@ async function fetchOpenSessionRow(
     )) as any[];
     const r = rows[0];
     if (!r) return null;
-    return { log_id: Number(r.log_id), in_time: (r.in_time as string) ?? null };
+    return {
+      log_id: Number(r.log_id),
+      in_time: (r.in_time as string) ?? null,
+      in_age_seconds: Number(r.in_age_seconds ?? 0),
+    };
+  });
+}
+
+/** 直近の「退室済み」行を1件取得（退室直後の重複スキャンで新規入室 INSERT を防ぐため） */
+async function fetchLatestClosedSessionRow(
+  pool: Pool,
+  userEmail: string,
+  eventId: number
+): Promise<ClosedSessionRow | null> {
+  return withConnection(pool, async (conn) => {
+    const [rows] = (await conn.execute(
+      `SELECT log_id, in_time, out_time, TIMESTAMPDIFF(SECOND, out_time, NOW()) AS out_age_seconds
+       FROM attendance_logs
+       WHERE email = ? AND event_id = ?
+         AND out_time IS NOT NULL
+       ORDER BY log_id DESC
+       LIMIT 1`,
+      [userEmail, eventId]
+    )) as any[];
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      log_id: Number(r.log_id),
+      in_time: (r.in_time as string) ?? null,
+      out_time: (r.out_time as string) ?? null,
+      out_age_seconds: Number(r.out_age_seconds ?? 0),
+    };
+  });
+}
+
+/** 書き込み後の確定値を DB から読み直す（JST 文字列のまま返す） */
+async function fetchRowById(
+  pool: Pool,
+  logId: number
+): Promise<{ in_time: string | null; out_time: string | null } | null> {
+  return withConnection(pool, async (conn) => {
+    const [rows] = (await conn.execute(
+      'SELECT in_time, out_time FROM attendance_logs WHERE log_id = ? LIMIT 1',
+      [logId]
+    )) as any[];
+    const r = rows[0];
+    if (!r) return null;
+    return { in_time: (r.in_time as string) ?? null, out_time: (r.out_time as string) ?? null };
   });
 }
 
@@ -213,36 +216,46 @@ async function punchEntryExitToggle(
 
   if (openSession) {
     const entryLogId = openSession.log_id;
-    const entryInTime = openSession.in_time;
 
-    const outTimeForDb = requireJstDatetimeForBind(nowJstMysqlDatetime(), 'out_time (checkout UPDATE)');
+    // 入室直後（または in_time が未来にズレている）場合は同一スキャンの重複とみなし、退室にしない
+    if (openSession.in_age_seconds < DEDUP_WINDOW_SECONDS) {
+      return {
+        log_id: entryLogId,
+        action: 'in',
+        in_time: openSession.in_time,
+        message: '入室打刻が完了しました',
+      };
+    }
 
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
 
-      // 開いているセッション行のみ更新（in_time 必須・out_time NULL を再確認）
+      // 開いているセッション行のみ更新。in_time は絶対に書き換えない。
+      // out_time は GREATEST(NOW(), in_time) で必ず in_time 以降になり、逆転しない。
       const [upd] = (await conn.execute(
         `UPDATE attendance_logs
-         SET out_time = ?, staff_email = ?, updated_at = CURRENT_TIMESTAMP
+         SET out_time = GREATEST(NOW(), in_time), staff_email = ?, updated_at = CURRENT_TIMESTAMP
          WHERE log_id = ? AND email = ? AND event_id = ?
            AND in_time IS NOT NULL
            AND out_time IS NULL`,
-        [outTimeForDb, staffEmailBound, entryLogId, userEmail, eventId]
+        [staffEmailBound, entryLogId, userEmail, eventId]
       )) as any;
 
       if (upd.affectedRows === 0) {
+        // 並行リクエストが先に閉じた場合は DB の現在状態を返す（新規 INSERT はしない）
         await conn.rollback();
-        return punchEntryExitToggle(pool, userEmail, eventId, staffEmailBound, retryDepth + 1);
+        return punchResultFromDbState(pool, userEmail, eventId);
       }
 
       await conn.commit();
 
+      const saved = await fetchRowById(pool, entryLogId);
       return {
         log_id: entryLogId,
         action: 'out',
-        in_time: entryInTime,
-        out_time: outTimeForDb,
+        in_time: saved?.in_time ?? openSession.in_time,
+        out_time: saved?.out_time ?? null,
         message: '退室打刻が完了しました',
       };
     } catch (e: any) {
@@ -259,19 +272,35 @@ async function punchEntryExitToggle(
     }
   }
 
-  // 入室: in_time は DATETIME 文字列、out_time は SQL の NULL（プレースホルダは使わない）
-  const inTimeForDb = requireJstDatetimeForBind(nowJstMysqlDatetime(), 'in_time (checkin INSERT)');
+  // 退室直後の重複スキャンでは新しい入室行を作らず、直前の退室結果を返す
+  const latestClosed = await fetchLatestClosedSessionRow(pool, userEmail, eventId);
+  if (latestClosed && latestClosed.out_age_seconds < DEDUP_WINDOW_SECONDS) {
+    return {
+      log_id: latestClosed.log_id,
+      action: 'out',
+      in_time: latestClosed.in_time,
+      out_time: latestClosed.out_time,
+      message: '退室打刻が完了しました',
+    };
+  }
+
+  // 入室: in_time も DB の NOW()（JST）を使い、Lambda 側の時計は使わない
   try {
     return await withConnection(pool, async (conn) => {
       const [result] = (await conn.execute(
         `INSERT INTO attendance_logs (email, event_id, type, in_time, out_time, staff_email)
-         VALUES (?, ?, 'entry', ?, NULL, ?)`,
-        [userEmail, eventId, inTimeForDb, staffEmailBound]
+         VALUES (?, ?, 'entry', NOW(), NULL, ?)`,
+        [userEmail, eventId, staffEmailBound]
+      )) as any[];
+      const logId = Number(result.insertId);
+      const [rows] = (await conn.execute(
+        'SELECT in_time FROM attendance_logs WHERE log_id = ? LIMIT 1',
+        [logId]
       )) as any[];
       return {
-        log_id: result.insertId,
+        log_id: logId,
         action: 'in',
-        in_time: inTimeForDb,
+        in_time: (rows[0]?.in_time as string) ?? null,
         message: '入室打刻が完了しました',
       };
     });

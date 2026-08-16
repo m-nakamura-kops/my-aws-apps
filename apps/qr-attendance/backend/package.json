@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "sync:response": "bash scripts/sync-response-to-lambdas.sh",
+    "sync:db": "bash scripts/sync-shared-db-to-lambdas.sh",
+    "sync:shared": "npm run sync:response && npm run sync:db",
     "build": "tsc",
     "deploy": "npm run build && serverless deploy",
     "test": "jest",
@@ -16,7 +18,8 @@
     "reset-cognito-passwords": "node scripts/reset-cognito-passwords.js",
     "force-create-cognito-users": "node scripts/force-create-cognito-users.js",
     "integration-test": "node scripts/integration-test-checklist.js",
-    "smoke:student-delete-encoded-email": "node scripts/smoke-student-delete-encoded-email.js"
+    "smoke:student-delete-encoded-email": "node scripts/smoke-student-delete-encoded-email.js",
+    "add-notes-adhoc": "node scripts/add-attendance-logs-notes-adhoc.js"
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.500.0",

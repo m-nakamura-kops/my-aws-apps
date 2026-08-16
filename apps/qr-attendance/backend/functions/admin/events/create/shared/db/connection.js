@@ -7,15 +7,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.withConnection = withConnection;
 exports.initDB = initDB;
 exports.getDBConfig = getDBConfig;
 exports.getDB = getDB;
 exports.closeDB = closeDB;
-exports.withConnection = withConnection;
 const promise_1 = __importDefault(require("mysql2/promise"));
 let pool = null;
 /**
- * プールから接続を1本取得し、必ず release する（全 Lambda 共通）
+ * プールから接続を1本取得し、必ず release する（全 Lambda 共通・リーク防止）
  */
 async function withConnection(pool, fn) {
     const conn = await pool.getConnection();
@@ -33,11 +33,12 @@ function initDB(config) {
     if (pool) {
         return pool;
     }
+    // Lambda 1 実行あたりの同時接続を抑え、RDS の max_connections を枯渇させない
     const rawLimit = parseInt(process.env.CONNECTION_LIMIT || '5', 10);
     const connectionLimit = Number.isNaN(rawLimit)
         ? 5
         : Math.min(Math.max(1, rawLimit), 5);
-    pool = promise_1.default.createPool({
+    const poolConfig = {
         host: config.host,
         port: config.port,
         user: config.user,
@@ -49,7 +50,15 @@ function initDB(config) {
         idleTimeout: 60000,
         enableKeepAlive: true,
         keepAliveInitialDelay: 0,
+        // DATETIME は JST 壁時計として保存・返却（UTC 変換による表示ズレを防ぐ）
+        timezone: '+09:00',
+        dateStrings: true,
         ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
+    };
+    pool = promise_1.default.createPool(poolConfig);
+    // DATETIME の CURRENT_TIMESTAMP も JST 壁時計になるようセッション TZ を固定
+    pool.on('connection', (connection) => {
+        connection.query("SET time_zone = '+09:00'");
     });
     return pool;
 }
