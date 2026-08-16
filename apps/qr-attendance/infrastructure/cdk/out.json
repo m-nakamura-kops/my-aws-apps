@@ -1,0 +1,1 @@
+{"statusCode":200,"body":"{\"ok\":true,\"lines\":[\"OK: DROP INDEX uk_event_email_type ON attendance_logs\",\"SKIP: users.is_active exists\",\"SKIP: idx_users_is_active exists\",\"SKIP (index): drop uk_event_email\",\"SKIP: type column exists\",\"OK: in_time allow null\",\"OK: v_attendance_details (type-aware)\"]}"}

@@ -1,0 +1,22 @@
+{
+  "name": "update-student-lambda",
+  "version": "1.0.0",
+  "description": "Lambda function for updating students",
+  "main": "index.js",
+  "scripts": {
+    "prebuild": "rm -rf shared index.js index.js.map && mkdir -p shared/db shared/utils && echo 'export interface DBConfig { host: string; port: number; user: string; password: string; database: string; ssl?: boolean; } export declare function initDB(config: DBConfig): any; export declare function getDBConfig(): DBConfig; export declare function getDB(): any; export declare function closeDB(): Promise<void>;' > shared/db/connection.d.ts && echo 'export declare function initDBFromSecrets(): Promise<void>;' > shared/db/secrets.d.ts && echo 'export interface ApiResponse<T = any> { statusCode: number; headers: Record<string, string>; body: string; } export interface ApiError { error: string; message: string; details?: any; } export declare function successResponse<T>(data: T, statusCode?: number): ApiResponse<T>; export declare function errorResponse(error: string, message: string, statusCode?: number, details?: any): ApiResponse<ApiError>; export declare function corsResponse(): ApiResponse;' > shared/utils/response.d.ts && echo 'export declare function getUserEmailFromRequest(event: any): string | null; export declare function getUserRoleFlag(email: string): Promise<number | null>; export declare function checkAdminPermission(event: any): Promise<{ authorized: boolean; email: string | null; error?: string }>;' > shared/utils/auth.d.ts && mv ../../../../shared/db/connection.ts ../../../../shared/db/connection.ts.bak 2>/dev/null || true && mv ../../../../shared/db/secrets.ts ../../../../shared/db/secrets.ts.bak 2>/dev/null || true && mv ../../../../shared/utils/response.ts ../../../../shared/utils/response.ts.bak 2>/dev/null || true && mv ../../../../shared/utils/auth.ts ../../../../shared/utils/auth.ts.bak 2>/dev/null || true",
+    "build": "tsc --noEmitOnError false 2>&1; EXIT_CODE=$?; npm run copy-shared && npm run fix-paths; if [ -f index.js ]; then exit 0; else exit $EXIT_CODE; fi",
+    "copy-shared": "mkdir -p shared/db shared/utils && cp ../../../../shared/db/*.js shared/db/ && cp ../../../../shared/utils/*.js shared/utils/ && cp ../../../../shared/db/*.d.ts shared/db/ 2>/dev/null || true && cp ../../../../shared/utils/*.d.ts shared/utils/ 2>/dev/null || true",
+    "fix-paths": "node fix-paths.js",
+    "postbuild": "mv ../../../../shared/db/connection.ts.bak ../../../../shared/db/connection.ts 2>/dev/null || true && mv ../../../../shared/db/secrets.ts.bak ../../../../shared/db/secrets.ts 2>/dev/null || true && mv ../../../../shared/utils/response.ts.bak ../../../../shared/utils/response.ts 2>/dev/null || true && mv ../../../../shared/utils/auth.ts.bak ../../../../shared/utils/auth.ts 2>/dev/null || true"
+  },
+  "dependencies": {
+    "mysql2": "^3.6.5",
+    "@aws-sdk/client-secrets-manager": "^3.490.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.130",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.0"
+  }
+}

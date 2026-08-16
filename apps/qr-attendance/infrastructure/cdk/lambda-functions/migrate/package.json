@@ -1,0 +1,13 @@
+{
+  "name": "migrate-lambda",
+  "version": "1.0.0",
+  "description": "Database migration Lambda function",
+  "main": "index.js",
+  "scripts": {
+    "sync-schema": "node -e \"const p=require('path');const fs=require('fs');const src=p.resolve(__dirname,'../../../../database/schema.sql');const dst=p.join(__dirname,'schema.sql');fs.copyFileSync(src,dst);console.log('sync-schema:',src,'->',dst);\""
+  },
+  "dependencies": {
+    "mysql2": "^3.9.0",
+    "@aws-sdk/client-secrets-manager": "^3.500.0"
+  }
+}

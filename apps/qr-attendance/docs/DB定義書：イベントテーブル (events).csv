@@ -1,0 +1,12 @@
+テーブル名,events,イベントテーブル
+説明,,開催イベントのマスタ情報
+,,,,,
+No,論理名,物理名,データ型,NULL,キー/制約,デフォルト,説明
+1,イベントID,event_id,INT,NOT NULL,PRIMARY KEY AUTO_INCREMENT,,イベントID
+2,名称,event_name,VARCHAR(100),NOT NULL,,,イベント名称
+3,開催日時,event_date,DATETIME,NOT NULL,,,開催日時
+4,場所,location,VARCHAR(255),NULL,,,場所
+5,定員,capacity,INT,NULL,,,定員
+6,概要,summary,TEXT,NULL,,,概要
+7,作成日時,created_at,DATETIME,NULL,,CURRENT_TIMESTAMP,作成日時
+8,更新日時,updated_at,DATETIME,NULL,,CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,更新日時

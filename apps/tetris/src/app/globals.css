@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+:root {
+  --vh: 1vh;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  /* モバイルブラウザのアドレスバーを考慮した高さ */
+  height: calc(var(--vh, 1vh) * 100);
+  height: 100dvh;
+  height: 100vh; /* フォールバック */
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* スマホ用のタッチ操作最適化 */
+* {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* スマホ画面でスクロールを防ぐ */
+#__next {
+  height: calc(var(--vh, 1vh) * 100);
+  height: 100dvh;
+  height: 100vh; /* フォールバック */
+  overflow: hidden;
+  /* モバイルブラウザの実際のビューポート高さを使用 */
+  min-height: -webkit-fill-available;
+}
+
+/* スマホ画面での最適化 */
+@media (max-width: 640px) {
+  /* ゲームボードのセルサイズを動的に調整 */
+  .tetris-board {
+    max-width: 100%;
+    aspect-ratio: 10/20;
+  }
+  
+  /* ボタンのサイズを調整 */
+  .control-button {
+    font-size: 0.875rem;
+    padding: 0.5rem 1rem;
+  }
+}

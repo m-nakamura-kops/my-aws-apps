@@ -1,0 +1,10 @@
+{
+  "name": "seed-test-users-lambda",
+  "version": "1.0.0",
+  "description": "VPC 内から RDS へ結合テストユーザーを投入（invoke のみ・API なし）",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.500.0",
+    "mysql2": "^3.9.0"
+  }
+}

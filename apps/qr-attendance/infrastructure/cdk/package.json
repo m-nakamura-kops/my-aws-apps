@@ -1,0 +1,52 @@
+{
+  "name": "qr-attendance-infrastructure",
+  "version": "0.1.0",
+  "description": "QRコード打刻システムのAWSインフラストラクチャ（CDK）",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "build:lambda": "npm run build:lambda:migrate && npm run build:lambda:migrate-006 && npm run build:lambda:seed-test-users && npm run build:lambda:install-all-deps && npm run build:lambda:login && npm run build:lambda:register && npm run build:lambda:events && npm run build:lambda:attendance && npm run build:lambda:registrations && npm run build:lambda:students",
+    "build:lambda:install-all-deps": "bash scripts/install-backend-lambda-deps.sh",
+    "build:lambda:migrate": "cd lambda-functions/migrate && npm run sync-schema && npm install",
+    "build:lambda:migrate-006": "cd lambda-functions/migrate-006 && npm install",
+    "build:lambda:seed-test-users": "cd lambda-functions/seed-test-users && npm install",
+    "build:lambda:login": "cd ../../backend/functions/users/login && npm run build",
+    "build:lambda:register": "cd ../../backend/functions/users/register && npm run build",
+    "build:lambda:events": "npm run build:lambda:events:create && npm run build:lambda:events:list && npm run build:lambda:events:update && npm run build:lambda:events:delete && npm run build:lambda:events:qr && npm run build:lambda:events:participants && npm run build:lambda:events:attendance-report",
+    "build:lambda:events:create": "cd ../../backend/functions/admin/events/create && npm install && npm run build",
+    "build:lambda:events:list": "cd ../../backend/functions/admin/events/list && npm install && npm run build",
+    "build:lambda:events:update": "cd ../../backend/functions/admin/events/update && npm install && npm run build",
+    "build:lambda:events:delete": "cd ../../backend/functions/admin/events/delete && npm install && npm run build",
+    "build:lambda:events:qr": "cd ../../backend/functions/admin/events/qr && npm install && npm run build",
+    "build:lambda:events:participants": "cd ../../backend/functions/admin/events/participants && npm install && npm run build",
+    "build:lambda:events:attendance-report": "cd ../../backend/functions/admin/events/attendance-report && npm install && npm run build",
+    "build:lambda:attendance": "npm run build:lambda:attendance:punch && npm run build:lambda:attendance:history",
+    "build:lambda:attendance:punch": "cd ../../backend/functions/users/attendance && npm install && npm run build",
+    "build:lambda:attendance:history": "cd ../../backend/functions/users/attendance/history && npm install && npm run build",
+    "build:lambda:registrations": "npm run build:lambda:registrations:register && npm run build:lambda:registrations:unregister && npm run build:lambda:registrations:list",
+    "build:lambda:registrations:register": "cd ../../backend/functions/users/events/register && npm install && npm run build",
+    "build:lambda:registrations:unregister": "cd ../../backend/functions/users/events/unregister && npm install && npm run build",
+    "build:lambda:registrations:list": "cd ../../backend/functions/users/registrations && npm install && npm run build",
+    "build:lambda:students": "npm run build:lambda:students:import",
+    "build:lambda:students:import": "cd ../../backend/functions/admin/students/import && npm install && npm run build",
+    "cdk": "cdk",
+    "deploy": "cdk deploy --all",
+    "deploy:rds": "cdk deploy QrAttendanceRdsStack-dev",
+    "deploy:cognito": "cdk deploy QrAttendanceCognitoStack-dev",
+    "prebuild:lambda": "npm --prefix ../../backend run sync:response",
+    "deploy:api": "npm run build:lambda && cdk deploy QrAttendanceApiStack-dev",
+    "diff": "cdk diff",
+    "synth": "cdk synth",
+    "destroy": "cdk destroy --all"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.120.0",
+    "constructs": "^10.3.0",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.0",
+    "aws-cdk": "^2.120.0"
+  }
+}

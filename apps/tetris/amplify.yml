@@ -1,0 +1,22 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - echo "Current directory:" && pwd
+        - echo "Node version:" && node --version
+        - echo "NPM version:" && npm --version
+        - echo "Installing dependencies..."
+        - npm ci
+    build:
+      commands:
+        - echo "Building Next.js app..."
+        - npm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*
+      - .next/cache/**/*
