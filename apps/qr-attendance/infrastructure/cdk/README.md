@@ -1,209 +1,62 @@
-# Infrastructure as Code (AWS CDK)
+# QrAttendance infrastructure (retired)
 
-## 概要
+QrAttendance の API、RDS MySQL、dev VPC は 2026-09-07 に廃止しました。
 
-QRコード打刻システムのAWSインフラストラクチャをCDKで定義します。
+現在この CDK app が管理するのは次のリソースだけです。
 
-## スタック構成
+- `prod`: post-automation と共有する既存 VPC / subnet / route / NAT / IGW と
+  `LambdaSecurityGroup`
+- `dev`: synth 対象なし
 
-- **QrAttendanceRdsStack**: RDS MySQLインスタンス、VPC、セキュリティグループ
-- **QrAttendanceCognitoStack**: Cognito User Pool、User Pool Client
-- **QrAttendanceApiStack**: API Gateway、Lambda関数
+共有先の Aurora PostgreSQL `post-automation-prod-aurora-pg` は保持しています。
+2026-09-07 に RDS Extended Support の自動加入を無効化し、エンジン 16.13 と
+稼働状態を変えずに `open-source-rds-extended-support-disabled` へ設定済みです。
 
-## 前提条件
+`QrAttendanceApiStack-*` と `QrAttendanceRdsStack-dev` は意図的に synth 対象から
+除外しています。`QrAttendanceRdsStack-prod` という既存 stack 名は互換性のため
+維持していますが、DB関連リソースを含まないネットワーク専用スタックです。
+既存 Cognito stack はユーザーデータを残したまま AWS 上で保持し、廃止済み app の
+一括 deploy で変更されないよう synth 対象から除外しています。
 
-### 1. AWS CLIのインストールと認証
+## 再作成禁止
 
-```bash
-# AWS CLIのインストール確認
-aws --version
+次のリソースをこの app に再追加しないでください。
 
-# 認証情報の設定
-aws configure
-```
+- `AWS::RDS::DBInstance` / `rds.DatabaseInstance`
+- QrAttendance DB 用 Secret、DB subnet group、DB security group
+- 削除済み API stack
+- dev RDS/VPC stack
 
-以下の情報を入力：
-- AWS Access Key ID
-- AWS Secret Access Key
-- Default region name: `ap-northeast-1`
-- Default output format: `json`
+AWS 側では、管理者グループ、実際に復元操作を行ったユーザー、既知の
+CloudFormation 実行ロール、および AWS Backup 復元ロールに
+`../guardrails/deny-rds-recreation.json` をインラインポリシー
+`DenyQrAttendanceRdsRecreation` として設定しています。
+QrAttendance を示す DB 識別子、`Project=qr-attendance` タグ、または保持 snapshot を
+使った DB 作成・復元を明示的に拒否します。このガードを外す場合は、RDS Extended
+Support を無効にした復元計画と承認を先に用意してください。
 
-### 2. CDKのインストール
+保持している MySQL 8.0 の snapshot を復元する必要が生じた場合は、新しい対応済み
+major version への移行計画を立てたうえで、RDS API/CLI の
+`EngineLifecycleSupport` を `open-source-rds-extended-support-disabled` に明示して
+ください。既定値のまま復元すると RDS Extended Support 課金が再発します。
 
-```bash
-npm install -g aws-cdk
-cdk --version
-```
-
-### 3. CDKブートストラップ（初回のみ）
+## 確認
 
 ```bash
 cd apps/qr-attendance/infrastructure/cdk
-npm install
-cdk bootstrap
+npm ci
+
+CDK_ENV=prod \
+CDK_DEFAULT_ACCOUNT=588738585231 \
+CDK_DEFAULT_REGION=ap-northeast-1 \
+npx cdk list
+
+CDK_ENV=prod \
+CDK_DEFAULT_ACCOUNT=588738585231 \
+CDK_DEFAULT_REGION=ap-northeast-1 \
+npx cdk synth QrAttendanceRdsStack-prod
 ```
 
-## デプロイ手順
-
-### 1. 環境変数の設定
-
-```bash
-# 開発環境
-export CDK_ENV=dev
-export CDK_DEFAULT_REGION=ap-northeast-1
-
-# AWSアカウントIDを確認
-aws sts get-caller-identity --query Account --output text
-export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-```
-
-### 2. スタックのデプロイ
-
-#### すべてのスタックをデプロイ
-
-```bash
-npm run deploy
-```
-
-#### 個別にデプロイ
-
-```bash
-# RDSスタックのみ
-npm run deploy:rds
-
-# Cognitoスタックのみ
-npm run deploy:cognito
-
-# APIスタックのみ
-npm run deploy:api
-```
-
-### 3. デプロイ確認
-
-```bash
-# スタック一覧の確認
-cdk list
-
-# スタックの差分確認
-cdk diff
-
-# スタックの詳細確認
-aws cloudformation describe-stacks --stack-name QrAttendanceRdsStack-dev
-```
-
-## リソース情報の取得
-
-### RDS接続情報の取得
-
-```bash
-# エンドポイント取得
-aws cloudformation describe-stacks \
-  --stack-name QrAttendanceRdsStack-dev \
-  --query 'Stacks[0].Outputs[?OutputKey==`DbEndpoint`].OutputValue' \
-  --output text
-
-# Secrets Managerからパスワード取得
-aws secretsmanager get-secret-value \
-  --secret-id $(aws cloudformation describe-stacks \
-    --stack-name QrAttendanceRdsStack-dev \
-    --query 'Stacks[0].Outputs[?OutputKey==`DbSecretArn`].OutputValue' \
-    --output text) \
-  --query SecretString \
-  --output text | jq -r '.password'
-```
-
-### Cognito情報の取得
-
-```bash
-# User Pool ID取得
-aws cloudformation describe-stacks \
-  --stack-name QrAttendanceCognitoStack-dev \
-  --query 'Stacks[0].Outputs[?OutputKey==`UserPoolId`].OutputValue' \
-  --output text
-
-# User Pool Client ID取得
-aws cloudformation describe-stacks \
-  --stack-name QrAttendanceCognitoStack-dev \
-  --query 'Stacks[0].Outputs[?OutputKey==`UserPoolClientId`].OutputValue' \
-  --output text
-```
-
-### API Gateway URL取得
-
-```bash
-aws cloudformation describe-stacks \
-  --stack-name QrAttendanceApiStack-dev \
-  --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
-  --output text
-```
-
-## データベーススキーマの適用
-
-RDSが作成されたら、スキーマを適用します：
-
-```bash
-# 接続情報を取得
-DB_ENDPOINT=$(aws cloudformation describe-stacks \
-  --stack-name QrAttendanceRdsStack-dev \
-  --query 'Stacks[0].Outputs[?OutputKey==`DbEndpoint`].OutputValue' \
-  --output text)
-
-DB_PASSWORD=$(aws secretsmanager get-secret-value \
-  --secret-id $(aws cloudformation describe-stacks \
-    --stack-name QrAttendanceRdsStack-dev \
-    --query 'Stacks[0].Outputs[?OutputKey==`DbSecretArn`].OutputValue' \
-    --output text) \
-  --query SecretString \
-  --output text | jq -r '.password')
-
-# スキーマ適用（MySQLクライアントが必要）
-mysql -h $DB_ENDPOINT -u admin -p$DB_PASSWORD qr_attendance < ../../database/schema.sql
-```
-
-**注意**: RDSはVPC内のプライベートサブネットにあるため、ローカルから直接接続できません。
-以下のいずれかの方法を使用してください：
-1. EC2インスタンス経由で接続
-2. AWS Systems Manager Session Manager経由
-3. 一時的にパブリックアクセスを有効化（開発環境のみ）
-
-## スタックの削除
-
-```bash
-# すべてのスタックを削除
-npm run destroy
-
-# または個別に削除
-cdk destroy QrAttendanceApiStack-dev
-cdk destroy QrAttendanceCognitoStack-dev
-cdk destroy QrAttendanceRdsStack-dev
-```
-
-## トラブルシューティング
-
-### CDKブートストラップエラー
-
-```bash
-# リージョンを指定してブートストラップ
-cdk bootstrap aws://ACCOUNT-ID/ap-northeast-1
-```
-
-### 権限エラー
-
-IAMユーザーに以下の権限が必要です：
-- CloudFormation
-- EC2
-- RDS
-- Lambda
-- API Gateway
-- Cognito
-- Secrets Manager
-- VPC
-
-### VPC制限エラー
-
-AWSアカウントのVPC数制限に達している場合、既存のVPCを使用するようにコードを修正してください。
-
-## 参考資料
-
-- [AWS CDK Documentation](https://docs.aws.amazon.com/cdk/)
-- [CDK Workshop](https://cdkworkshop.com/)
+synthesized template に `AWS::RDS::DBInstance` が存在しないことを確認してください。
+prod の共有 VPC は post-automation の Aurora PostgreSQL が利用しているため、
+`QrAttendanceRdsStack-prod` 自体を destroy してはいけません。

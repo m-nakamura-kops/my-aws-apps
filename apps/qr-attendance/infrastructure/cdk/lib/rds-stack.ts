@@ -1,25 +1,34 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
-import * as rds from 'aws-cdk-lib/aws-rds';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 
 export interface QrAttendanceRdsStackProps extends cdk.StackProps {}
 
+/**
+ * The historical stack name is retained because post-automation uses its VPC.
+ * QrAttendance's MySQL and all DB-only resources are intentionally retired.
+ */
 export class QrAttendanceRdsStack extends cdk.Stack {
   public readonly vpc: ec2.Vpc;
-  public readonly dbSecurityGroup: ec2.SecurityGroup;
   public readonly lambdaSecurityGroup: ec2.SecurityGroup;
-  public readonly dbSecret: secretsmanager.Secret;
-  public readonly dbInstance: rds.DatabaseInstance;
 
   constructor(scope: Construct, id: string, props: QrAttendanceRdsStackProps) {
     super(scope, id, props);
 
-    // VPC作成
+    // post-automation と共有しているため、既存の論理 ID を変えずに維持する。
+    //
+    // NAT Gateway は 2026-09 に廃止 (時間課金 $50/月 の削減)。
+    // post-automation の Lambda は RDS Data API 移行で VPC 外に出たため、
+    // この VPC から外向き通信を行うものは残っていない (EC2 web はパブリック
+    // サブネット + EIP で NAT 非依存、Aurora へは Data API 経由)。
+    // ⚠️ デプロイ前提: post-automation 側の Data API 移行 + Lambda の VPC 離脱
+    // が完了し、VPC 内の lambda タイプ ENI が消えていること。
+    // 'private' サブネットは NAT 廃止に伴い PRIVATE_ISOLATED に変更
+    // (subnet group 名と CIDR は据え置きなのでサブネット自体は置換されず、
+    // NAT 向けルートと NAT GW / EIP だけが削除される)。
     this.vpc = new ec2.Vpc(this, 'Vpc', {
       maxAzs: 2,
-      natGateways: 1,
+      natGateways: 0,
       subnetConfiguration: [
         {
           cidrMask: 24,
@@ -29,7 +38,7 @@ export class QrAttendanceRdsStack extends cdk.Stack {
         {
           cidrMask: 24,
           name: 'private',
-          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
         },
         {
           cidrMask: 24,
@@ -39,103 +48,16 @@ export class QrAttendanceRdsStack extends cdk.Stack {
       ],
     });
 
-    // データベース用セキュリティグループ
-    this.dbSecurityGroup = new ec2.SecurityGroup(this, 'DbSecurityGroup', {
-      vpc: this.vpc,
-      description: 'Security group for RDS MySQL instance',
-      allowAllOutbound: true,
-    });
-
-    // Lambda用セキュリティグループ（APIスタックで使用）
+    // post-automation が参照しているため、既存の論理 ID を変えずに維持する。
     this.lambdaSecurityGroup = new ec2.SecurityGroup(this, 'LambdaSecurityGroup', {
       vpc: this.vpc,
       description: 'Security group for Lambda functions',
       allowAllOutbound: true,
     });
 
-    // LambdaからRDSへのアクセスを許可
-    this.dbSecurityGroup.addIngressRule(
-      this.lambdaSecurityGroup,
-      ec2.Port.tcp(3306),
-      'Allow MySQL access from Lambda'
-    );
-
-    // データベース認証情報をSecrets Managerに保存
-    this.dbSecret = new secretsmanager.Secret(this, 'DbSecret', {
-      description: 'RDS MySQL master user credentials',
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({ username: 'admin' }),
-        generateStringKey: 'password',
-        excludeCharacters: '"@/\\',
-        includeSpace: false,
-        passwordLength: 32,
-      },
-    });
-
-    // RDSサブネットグループ
-    const dbSubnetGroup = new rds.SubnetGroup(this, 'DbSubnetGroup', {
-      vpc: this.vpc,
-      description: 'Subnet group for RDS MySQL instance',
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-      },
-    });
-
-    // RDS MySQLインスタンス
-    // NOTE: 旧インスタンス（Construct ID 'DatabaseInstance'）が CloudFormation 管理外で削除され
-    // ドリフトしたため、Construct ID を 'DatabaseInstanceV2' に付け替えて新規作成させる。
-    this.dbInstance = new rds.DatabaseInstance(this, 'DatabaseInstanceV2', {
-      engine: rds.DatabaseInstanceEngine.mysql({
-        version: rds.MysqlEngineVersion.VER_8_0,
-      }),
-      instanceType: ec2.InstanceType.of(
-        ec2.InstanceClass.T3,
-        ec2.InstanceSize.MICRO
-      ),
-      vpc: this.vpc,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-      },
-      securityGroups: [this.dbSecurityGroup],
-      subnetGroup: dbSubnetGroup,
-      credentials: rds.Credentials.fromSecret(this.dbSecret),
-      databaseName: 'qr_attendance',
-      allocatedStorage: 20,
-      maxAllocatedStorage: 100,
-      storageEncrypted: true,
-      backupRetention: cdk.Duration.days(7),
-      deleteAutomatedBackups: false, // 再発防止: インスタンス削除時も自動バックアップを保持
-      deletionProtection: true, // 再発防止: 誤削除を防ぐ（本番）
-      removalPolicy: cdk.RemovalPolicy.RETAIN, // 再発防止: スタック削除時もインスタンスを保持（本番）
-      multiAz: false, // コスト削減のため単一AZ（必要に応じて true）
-      publiclyAccessible: false,
-      enablePerformanceInsights: false, // コスト削減
-    });
-
-    // 出力
-    new cdk.CfnOutput(this, 'DbEndpoint', {
-      value: this.dbInstance.instanceEndpoint.hostname,
-      description: 'RDS MySQL endpoint',
-      exportName: `${this.stackName}-DbEndpoint`,
-    });
-
-    new cdk.CfnOutput(this, 'DbPort', {
-      value: this.dbInstance.instanceEndpoint.port.toString(),
-      description: 'RDS MySQL port',
-      exportName: `${this.stackName}-DbPort`,
-    });
-
-    new cdk.CfnOutput(this, 'DbSecretArn', {
-      value: this.dbSecret.secretArn,
-      description: 'RDS MySQL secret ARN',
-      exportName: `${this.stackName}-DbSecretArn`,
-    });
-
-    new cdk.CfnOutput(this, 'DbName', {
-      value: 'qr_attendance',
-      description: 'RDS MySQL database name',
-      exportName: `${this.stackName}-DbName`,
-    });
+    // QrAttendance の MySQL は 2026-09-07 に廃止済み。
+    // RDS、DB Secret、DB Subnet Group、DB Security Group を再追加すると、
+    // RDS Extended Support を含む恒常課金が再発し得るため禁止する。
 
     new cdk.CfnOutput(this, 'VpcId', {
       value: this.vpc.vpcId,

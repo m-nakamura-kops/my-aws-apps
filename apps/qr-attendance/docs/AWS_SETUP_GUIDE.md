@@ -1,5 +1,7 @@
 # AWS環境セットアップガイド
 
+> **廃止済み:** QrAttendance API/RDS は 2026-09-07 に削除しました。以下は履歴資料であり、コマンドを実行しないでください。現行方針は `../infrastructure/cdk/README.md` を参照してください。
+
 ## 概要
 
 ローカルにMySQLをインストールせず、AWS上のリソース（RDS、Cognito、Lambda等）を活用して開発を進めるためのガイドです。
