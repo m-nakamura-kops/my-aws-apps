@@ -30,14 +30,9 @@
     "build:lambda:students": "npm run build:lambda:students:import",
     "build:lambda:students:import": "cd ../../backend/functions/admin/students/import && npm install && npm run build",
     "cdk": "cdk",
-    "deploy": "cdk deploy --all",
-    "deploy:rds": "cdk deploy QrAttendanceRdsStack-dev",
-    "deploy:cognito": "cdk deploy QrAttendanceCognitoStack-dev",
     "prebuild:lambda": "npm --prefix ../../backend run sync:response",
-    "deploy:api": "npm run build:lambda && cdk deploy QrAttendanceApiStack-dev",
     "diff": "cdk diff",
-    "synth": "cdk synth",
-    "destroy": "cdk destroy --all"
+    "synth": "cdk synth"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.120.0",

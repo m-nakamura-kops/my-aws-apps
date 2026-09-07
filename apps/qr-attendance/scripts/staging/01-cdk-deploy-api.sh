@@ -3,6 +3,9 @@
 # 使い方: Mac のターミナルで実行推奨（長時間・Cursor では Aborted になりやすい）
 set -euo pipefail
 
+echo "ERROR: QrAttendance API/RDS は 2026-09-07 に廃止済みです。このスクリプトは実行できません。" >&2
+exit 1
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CDK_DIR="$ROOT/infrastructure/cdk"

@@ -1,5 +1,7 @@
 # CORS 修正後のデプロイ手順
 
+> **廃止済み:** QrAttendance API/RDS は 2026-09-07 に削除しました。以下は履歴資料であり、デプロイコマンドを実行しないでください。
+
 ## 1. Lambda（`shared/utils/response` の反映）
 
 ルートの `response.js` / `response.d.ts` を全関数の `shared/utils` に一括同期:

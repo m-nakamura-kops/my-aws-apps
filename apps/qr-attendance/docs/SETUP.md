@@ -1,5 +1,7 @@
 # セットアップガイド
 
+> **廃止済み:** QrAttendance API/RDS は 2026-09-07 に削除しました。以下は履歴資料であり、RDS 作成コマンドを実行しないでください。現行方針は `../infrastructure/cdk/README.md` を参照してください。
+
 ## 前提条件
 
 - Node.js 18.x以上

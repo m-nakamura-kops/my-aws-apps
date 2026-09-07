@@ -1,0 +1,55 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyQrAttendanceDbCreationByIdentifier",
+      "Effect": "Deny",
+      "Action": [
+        "rds:CreateDBInstance",
+        "rds:CreateDBInstanceReadReplica",
+        "rds:RestoreDBInstanceFromDBSnapshot",
+        "rds:RestoreDBInstanceToPointInTime",
+        "rds:RestoreDBInstanceFromS3"
+      ],
+      "Resource": [
+        "arn:aws:rds:*:588738585231:db:*qrattendance*",
+        "arn:aws:rds:*:588738585231:db:*qr-attendance*"
+      ]
+    },
+    {
+      "Sid": "DenyQrAttendanceDbCreationByProjectTag",
+      "Effect": "Deny",
+      "Action": [
+        "rds:CreateDBInstance",
+        "rds:CreateDBInstanceReadReplica",
+        "rds:RestoreDBInstanceFromDBSnapshot",
+        "rds:RestoreDBInstanceToPointInTime",
+        "rds:RestoreDBInstanceFromS3"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEqualsIgnoreCase": {
+          "aws:RequestTag/Project": "qr-attendance"
+        }
+      }
+    },
+    {
+      "Sid": "DenyRestoreFromQrAttendanceSnapshots",
+      "Effect": "Deny",
+      "Action": "rds:RestoreDBInstanceFromDBSnapshot",
+      "Resource": [
+        "arn:aws:rds:*:588738585231:snapshot:*qrattendance*",
+        "arn:aws:rds:*:588738585231:snapshot:*qr-attendance*"
+      ]
+    },
+    {
+      "Sid": "DenyRestoreFromQrAttendanceAutomatedBackups",
+      "Effect": "Deny",
+      "Action": "rds:RestoreDBInstanceToPointInTime",
+      "Resource": [
+        "arn:aws:rds:ap-northeast-1:588738585231:auto-backup:ab-afbyugprysgdk27shr4niwzlavbmte7igvelss4q2fcgtujzjoly4qxobzkqtjb3",
+        "arn:aws:rds:ap-northeast-1:588738585231:auto-backup:ab-xgg7zn4ln3mzt4aiak5kpdmv5y2hcsz44w3ua7b6o4himk3qifzkpgf4ljwmc6md"
+      ]
+    }
+  ]
+}

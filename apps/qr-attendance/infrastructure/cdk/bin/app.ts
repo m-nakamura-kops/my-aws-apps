@@ -2,12 +2,9 @@
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
 import { QrAttendanceRdsStack } from '../lib/rds-stack';
-import { QrAttendanceCognitoStack } from '../lib/cognito-stack';
-import { QrAttendanceApiStack } from '../lib/api-stack';
 
 const app = new cdk.App();
 
-// 環境変数から環境を取得（デフォルト: dev）
 const env = process.env.CDK_ENV || 'dev';
 const account = process.env.CDK_DEFAULT_ACCOUNT || process.env.AWS_ACCOUNT_ID;
 const region = process.env.CDK_DEFAULT_REGION || process.env.AWS_REGION || 'ap-northeast-1';
@@ -21,58 +18,24 @@ const envConfig = {
   region,
 };
 
-const DEFAULT_FRONTEND_LOGIN_URL = 'https://main.d2s96axh42icx2.amplifyapp.com/login';
-const frontendLoginUrl =
-  (app.node.tryGetContext('frontendLoginUrl') as string | undefined) ||
-  process.env.FRONTEND_LOGIN_URL ||
-  DEFAULT_FRONTEND_LOGIN_URL;
+// QrAttendance の API、MySQL、dev VPC は 2026-09-07 に廃止した。
+// prod のネットワークは post-automation と共有しているため、同じ stack ID と
+// 論理 ID のまま VPC と LambdaSecurityGroup だけを維持する。
+if (env === 'prod') {
+  new QrAttendanceRdsStack(app, 'QrAttendanceRdsStack-prod', {
+    env: envConfig,
+    description: 'Shared production network (QrAttendance MySQL retired)',
+    tags: {
+      Project: 'qr-attendance',
+      Environment: env,
+    },
+  });
+}
 
-// DB_HOST の一時上書き。RDS インスタンス再作成時にクロススタック Export（endpoint）の
-// 「in use」ロックを外すために使用する（-c dbHostOverride=<endpoint>）。
-// 未指定時は通常どおり RDS スタックのインスタンス endpoint をクロススタック参照する。
-const dbHostOverride = app.node.tryGetContext('dbHostOverride') as string | undefined;
+// API stack は廃止済み。ここへ再追加すると削除済み RDS の再作成経路が
+// 復活するため、意図的にインスタンス化しない。
 
-// RDSスタック
-const rdsStack = new QrAttendanceRdsStack(app, `QrAttendanceRdsStack-${env}`, {
-  env: envConfig,
-  description: 'QRコード打刻システム - RDS (MySQL)',
-  tags: {
-    Project: 'qr-attendance',
-    Environment: env,
-  },
-});
-
-// Cognitoスタック
-const cognitoStack = new QrAttendanceCognitoStack(app, `QrAttendanceCognitoStack-${env}`, {
-  env: envConfig,
-  description: 'QRコード打刻システム - Cognito User Pool + CustomMessage Lambda',
-  frontendLoginUrl,
-  environmentName: env,
-  tags: {
-    Project: 'qr-attendance',
-    Environment: env,
-  },
-});
-
-// API Gateway + Lambdaスタック（RDSとCognitoに依存）
-const apiStack = new QrAttendanceApiStack(app, `QrAttendanceApiStack-${env}`, {
-  env: envConfig,
-  description: 'QRコード打刻システム - API Gateway + Lambda',
-  rdsSecret: rdsStack.dbSecret,
-  dbSecurityGroup: rdsStack.dbSecurityGroup,
-  lambdaSecurityGroup: rdsStack.lambdaSecurityGroup,
-  vpc: rdsStack.vpc,
-  userPool: cognitoStack.userPool,
-  userPoolClient: cognitoStack.userPoolClient,
-  dbEndpoint: dbHostOverride ?? rdsStack.dbInstance.instanceEndpoint.hostname,
-  tags: {
-    Project: 'qr-attendance',
-    Environment: env,
-  },
-});
-
-// スタック間の依存関係を明示
-apiStack.addDependency(rdsStack);
-apiStack.addDependency(cognitoStack);
+// Cognito stack には既存ユーザーがいるため AWS 上は保持するが、廃止済み app の
+// `cdk deploy --all` で変更されないよう、意図的にインスタンス化しない。
 
 app.synth();
