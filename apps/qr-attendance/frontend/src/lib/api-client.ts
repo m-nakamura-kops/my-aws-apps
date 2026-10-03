@@ -1,17 +1,14 @@
 /**
  * APIクライアント
  *
- * ベース URL は下記の本番 API Gateway に固定。
- * NEXT_PUBLIC_API_URL や localhost:3001 など環境変数・フォールバックは参照しない（設定漏れ・誤設定でも常に AWS を向く）。
+ * ベース URL は Amplify / .env の NEXT_PUBLIC_API_URL（ビルド時に埋め込まれる）。
+ * API Gateway を作り直すとホスト名が変わるため、URL はソースに固定しない。
  */
 
 import { NewPasswordRequiredError } from '@/lib/auth-errors';
 
-/** 本番 API Gateway（execute-api）— ビルド・.env に依存しない */
-const API_BASE_URL = 'https://0cpwlootl6.execute-api.ap-northeast-1.amazonaws.com/prod';
-
 function getApiBaseUrl(): string {
-  return API_BASE_URL.replace(/\/+$/, '');
+  return (process.env.NEXT_PUBLIC_API_URL || '').trim().replace(/\/+$/, '');
 }
 
 export interface ApiError {
