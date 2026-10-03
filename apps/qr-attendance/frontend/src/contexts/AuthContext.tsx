@@ -346,11 +346,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!isCognitoConfigured) {
       throw new Error('Cognito が未設定のため、ここからパスワードを変更できません。');
     }
+    // 認証の正は API トークンなので、Cognito 側のセッションが切れていても画面上はログイン中になる。
+    // updatePassword は Cognito の AccessToken が必要なため、入力された現在のパスワードで再サインインしてから実行する。
+    const signInWithCurrentPassword = async () => {
+      const me = await apiClient.getMe();
+      const out = await signIn({ username: me.email, password: previousPassword });
+      if (!out.isSignedIn) {
+        throw new Error('現在のパスワードでの再認証に失敗しました。ログアウトしてから再度ログインしてください。');
+      }
+    };
+    const isMissingSession = (err: unknown) => {
+      const e = err as { name?: string; message?: string };
+      const msg = (e?.message || '').toLowerCase();
+      return (
+        e?.name === 'UserUnAuthenticatedException' ||
+        msg.includes('needs to be authenticated') ||
+        msg.includes('user is not authenticated')
+      );
+    };
     try {
-      await updatePassword({
-        oldPassword: previousPassword,
-        newPassword: proposedPassword,
-      });
+      try {
+        await getCurrentUser();
+      } catch {
+        await signInWithCurrentPassword();
+      }
+      try {
+        await updatePassword({ oldPassword: previousPassword, newPassword: proposedPassword });
+      } catch (err) {
+        if (!isMissingSession(err)) throw err;
+        await signInWithCurrentPassword();
+        await updatePassword({ oldPassword: previousPassword, newPassword: proposedPassword });
+      }
     } catch (err) {
       throw mapCognitoChangePasswordError(err);
     }
