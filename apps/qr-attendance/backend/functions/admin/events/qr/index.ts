@@ -69,7 +69,10 @@ export const handler = async (
     // QRコード用のURLを生成（フロントエンドでスキャン時に使用）
     // APIエンドポイントのURLにデータと署名を含める
     const region = process.env.AWS_REGION || 'ap-northeast-1';
-    const apiId = process.env.API_ID || 'xcv8usy3dh'; // API GatewayのID（環境変数から取得）
+    const apiId = process.env.API_ID;
+    if (!apiId) {
+      return errorResponse('INTERNAL_ERROR', 'API_ID is not configured', 500);
+    }
     const apiBaseUrl = `https://${apiId}.execute-api.${region}.amazonaws.com/prod`;
     const qrCodeUrl = `${apiBaseUrl}/v1/users/attendance?data=${encodeURIComponent(qrCodeData)}&sig=${signature}`;
 

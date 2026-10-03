@@ -38,10 +38,10 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
-const connection_1 = require('./shared/db/connection');
-const secrets_1 = require('./shared/db/secrets');
-const response_1 = require('./shared/utils/response');
-const auth_1 = require('./shared/utils/auth');
+const connection_1 = require("./shared/db/connection");
+const secrets_1 = require("./shared/db/secrets");
+const response_1 = require("./shared/utils/response");
+const auth_1 = require("./shared/utils/auth");
 const crypto = __importStar(require("crypto"));
 const handler = async (event) => {
     // CORSプリフライトリクエスト対応
@@ -91,7 +91,10 @@ const handler = async (event) => {
         // QRコード用のURLを生成（フロントエンドでスキャン時に使用）
         // APIエンドポイントのURLにデータと署名を含める
         const region = process.env.AWS_REGION || 'ap-northeast-1';
-        const apiId = process.env.API_ID || 'xcv8usy3dh'; // API GatewayのID（環境変数から取得）
+        const apiId = process.env.API_ID;
+        if (!apiId) {
+            return (0, response_1.errorResponse)('INTERNAL_ERROR', 'API_ID is not configured', 500);
+        }
         const apiBaseUrl = `https://${apiId}.execute-api.${region}.amazonaws.com/prod`;
         const qrCodeUrl = `${apiBaseUrl}/v1/users/attendance?data=${encodeURIComponent(qrCodeData)}&sig=${signature}`;
         return (0, response_1.successResponse)({

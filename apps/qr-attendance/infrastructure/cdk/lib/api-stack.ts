@@ -1097,5 +1097,27 @@ export class QrAttendanceApiStack extends cdk.Stack {
       description: 'Invoke-only: transactional prod DB cleanup (aws lambda invoke)',
       exportName: `${this.stackName}-DbProdCleanupLambdaName`,
     });
+
+    // 本番はスタックから外れた API / Lambda を即削除しない（論理 ID 変更やスタック削除時のガード）
+    if (this.stackName.endsWith('-prod')) {
+      cdk.Aspects.of(this).add(new RetainProdApiResources());
+    }
+  }
+}
+
+/** 本番 API スタックの主要リソースに RemovalPolicy.RETAIN を付ける */
+class RetainProdApiResources implements cdk.IAspect {
+  public visit(node: Construct): void {
+    if (!cdk.CfnResource.isCfnResource(node)) {
+      return;
+    }
+    const retainTypes = new Set([
+      'AWS::ApiGateway::RestApi',
+      'AWS::ApiGateway::Stage',
+      'AWS::Lambda::Function',
+    ]);
+    if (retainTypes.has(node.cfnResourceType)) {
+      node.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+    }
   }
 }

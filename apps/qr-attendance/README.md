@@ -146,6 +146,18 @@ cd ../database
 mysql -u root -p qr_attendance < schema.sql
 ```
 
+## 本番の接続先と削除保護
+
+API のベース URL と DB ホストはソースに書かない。フロントは Amplify の `NEXT_PUBLIC_API_URL`（`frontend/src/lib/api-client.ts`）だけを使い、未設定ならリクエスト前に失敗する。削除済みの API Gateway ホストへのフォールバックは置かない。Cognito の User Pool ID / Client ID は `NEXT_PUBLIC_COGNITO_USER_POOL_ID` と `NEXT_PUBLIC_COGNITO_CLIENT_ID` を優先する。
+
+チェック:
+
+```bash
+node apps/qr-attendance/scripts/check-no-hardcoded-api-url.js
+```
+
+本番スタック `QrAttendanceApiStack-prod` は CloudFormation の Termination Protection を有効にする（`CDK_ENV=prod` で `terminationProtection: true`）。`cdk destroy` と `DeleteStack` は、保護を外すまで拒否される。API Gateway（REST API と Stage）および Lambda 関数は `RemovalPolicy.RETAIN` のため、スタックから論理 ID を外しても AWS 上のリソースは残る。RDS 本番も同様に Termination Protection とインスタンスの削除保護を有効にしている。
+
 ## 開発ガイド
 
 ### ドキュメント一覧

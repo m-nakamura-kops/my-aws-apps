@@ -36,6 +36,8 @@ const dbHostOverride = app.node.tryGetContext('dbHostOverride') as string | unde
 const rdsStack = new QrAttendanceRdsStack(app, `QrAttendanceRdsStack-${env}`, {
   env: envConfig,
   description: 'QRコード打刻システム - RDS (MySQL)',
+  environmentName: env,
+  terminationProtection: env === 'prod',
   tags: {
     Project: 'qr-attendance',
     Environment: env,
@@ -46,6 +48,7 @@ const rdsStack = new QrAttendanceRdsStack(app, `QrAttendanceRdsStack-${env}`, {
 const cognitoStack = new QrAttendanceCognitoStack(app, `QrAttendanceCognitoStack-${env}`, {
   env: envConfig,
   description: 'QRコード打刻システム - Cognito User Pool + CustomMessage Lambda',
+  terminationProtection: env === 'prod',
   frontendLoginUrl,
   environmentName: env,
   tags: {
@@ -58,6 +61,8 @@ const cognitoStack = new QrAttendanceCognitoStack(app, `QrAttendanceCognitoStack
 const apiStack = new QrAttendanceApiStack(app, `QrAttendanceApiStack-${env}`, {
   env: envConfig,
   description: 'QRコード打刻システム - API Gateway + Lambda',
+  // cdk destroy / DeleteStack による本番 API の誤削除を拒否する
+  terminationProtection: env === 'prod',
   rdsSecret: rdsStack.dbSecret,
   dbSecurityGroup: rdsStack.dbSecurityGroup,
   lambdaSecurityGroup: rdsStack.lambdaSecurityGroup,

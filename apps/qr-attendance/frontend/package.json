@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "check:api-url": "node ../scripts/check-no-hardcoded-api-url.js"
   },
   "dependencies": {
     "@aws-amplify/ui-react": "^6.0.0",
