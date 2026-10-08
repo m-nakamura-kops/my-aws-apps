@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
+import { execSync } from 'child_process';
 import * as cdk from 'aws-cdk-lib';
+import { Construct } from 'constructs';
 import { QrAttendanceRdsStack } from '../lib/rds-stack';
 import { QrAttendanceCognitoStack } from '../lib/cognito-stack';
-import { QrAttendanceApiStack } from '../lib/api-stack';
 
 const app = new cdk.App();
 
@@ -16,6 +17,8 @@ if (!account) {
   throw new Error('AWS Account ID is required. Set CDK_DEFAULT_ACCOUNT or AWS_ACCOUNT_ID environment variable.');
 }
 
+assertProdDeployFromMain(env);
+
 const envConfig = {
   account,
   region,
@@ -27,15 +30,12 @@ const frontendLoginUrl =
   process.env.FRONTEND_LOGIN_URL ||
   DEFAULT_FRONTEND_LOGIN_URL;
 
-// DB_HOST の一時上書き。RDS インスタンス再作成時にクロススタック Export（endpoint）の
-// 「in use」ロックを外すために使用する（-c dbHostOverride=<endpoint>）。
-// 未指定時は通常どおり RDS スタックのインスタンス endpoint をクロススタック参照する。
-const dbHostOverride = app.node.tryGetContext('dbHostOverride') as string | undefined;
-
-// RDSスタック
+// VPC のみ。MySQL と NAT は定義しない（再作成すると月額固定費が戻る）。
+// QrAttendanceApiStack は本番から外した。ここに戻すと DB エクスポートへの依存が復活し、
+// 次の deploy で MySQL を要求する状態に戻る。
 const rdsStack = new QrAttendanceRdsStack(app, `QrAttendanceRdsStack-${env}`, {
   env: envConfig,
-  description: 'QRコード打刻システム - RDS (MySQL)',
+  description: 'QRコード打刻システム - shared VPC (no MySQL, no NAT)',
   environmentName: env,
   terminationProtection: env === 'prod',
   tags: {
@@ -44,7 +44,11 @@ const rdsStack = new QrAttendanceRdsStack(app, `QrAttendanceRdsStack-${env}`, {
   },
 });
 
-// Cognitoスタック
+if (env === 'prod') {
+  assertStackHasNoResource(rdsStack, 'AWS::RDS::DBInstance');
+  assertStackHasNoResource(rdsStack, 'AWS::EC2::NatGateway');
+}
+
 const cognitoStack = new QrAttendanceCognitoStack(app, `QrAttendanceCognitoStack-${env}`, {
   env: envConfig,
   description: 'QRコード打刻システム - Cognito User Pool + CustomMessage Lambda',
@@ -57,27 +61,46 @@ const cognitoStack = new QrAttendanceCognitoStack(app, `QrAttendanceCognitoStack
   },
 });
 
-// API Gateway + Lambdaスタック（RDSとCognitoに依存）
-const apiStack = new QrAttendanceApiStack(app, `QrAttendanceApiStack-${env}`, {
-  env: envConfig,
-  description: 'QRコード打刻システム - API Gateway + Lambda',
-  // cdk destroy / DeleteStack による本番 API の誤削除を拒否する
-  terminationProtection: env === 'prod',
-  rdsSecret: rdsStack.dbSecret,
-  dbSecurityGroup: rdsStack.dbSecurityGroup,
-  lambdaSecurityGroup: rdsStack.lambdaSecurityGroup,
-  vpc: rdsStack.vpc,
-  userPool: cognitoStack.userPool,
-  userPoolClient: cognitoStack.userPoolClient,
-  dbEndpoint: dbHostOverride ?? rdsStack.dbInstance.instanceEndpoint.hostname,
-  tags: {
-    Project: 'qr-attendance',
-    Environment: env,
-  },
-});
-
-// スタック間の依存関係を明示
-apiStack.addDependency(rdsStack);
-apiStack.addDependency(cognitoStack);
+void cognitoStack;
 
 app.synth();
+
+/**
+ * 作業ブランチからの `CDK_ENV=prod cdk deploy` を synth 時点で止める。
+ * 2026-08、09、10 に別ブランチのデプロイが MySQL と NAT を作り直した。
+ */
+function assertStackHasNoResource(scope: Construct, resourceType: string) {
+  const visit = (node: Construct) => {
+    if (cdk.CfnResource.isCfnResource(node) && node.cfnResourceType === resourceType) {
+      throw new Error(
+        `本番テンプレートに ${resourceType} があります（${node.node.path}）。MySQL と NAT は戻さないでください。`
+      );
+    }
+    for (const child of node.node.children) {
+      visit(child);
+    }
+  };
+  visit(scope);
+}
+
+function assertProdDeployFromMain(environmentName: string) {
+  if (environmentName !== 'prod') {
+    return;
+  }
+  let branch = '';
+  try {
+    branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    throw new Error(
+      'CDK_ENV=prod は git の main ブランチでのみ実行できます。ブランチを判定できません。'
+    );
+  }
+  if (branch !== 'main') {
+    throw new Error(
+      `CDK_ENV=prod は main ブランチでのみ実行できます（現在: ${branch}）。作業ブランチからの本番デプロイは MySQL と NAT の再作成を繰り返したため禁止しています。`
+    );
+  }
+}

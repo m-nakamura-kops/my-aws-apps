@@ -156,7 +156,11 @@ API のベース URL と DB ホストはソースに書かない。フロント�
 node apps/qr-attendance/scripts/check-no-hardcoded-api-url.js
 ```
 
-本番スタック `QrAttendanceApiStack-prod` は CloudFormation の Termination Protection を有効にする（`CDK_ENV=prod` で `terminationProtection: true`）。`cdk destroy` と `DeleteStack` は、保護を外すまで拒否される。API Gateway（REST API と Stage）および Lambda 関数は `RemovalPolicy.RETAIN` のため、スタックから論理 ID を外しても AWS 上のリソースは残る。RDS 本番も同様に Termination Protection とインスタンスの削除保護を有効にしている。
+本番の MySQL と NAT ゲートウェイはスタックから外してある。`QrAttendanceRdsStack` に `AWS::RDS::DBInstance` や `natGateways: 1` を戻すと、延長サポート（MySQL 8.0）と NAT の月額固定費が再発する。VPC と isolated サブネットは post-automation の Aurora PostgreSQL と共有しているので削除しない。
+
+本番デプロイは main ブランチだけが通る（`bin/app.ts` がそれ以外を synth で止める）。入口は `infrastructure/cdk/scripts/deploy-prod.sh`。差分に DB インスタンスや NAT の追加が出たらそこで止まる。月額 $400 の予算 `monthly-cost-guard-400usd` が通知し、RDS の作成・削除・復元は SNS `RdsAlertTopic` に流れる。
+
+`QrAttendanceApiStack-prod` は廃止した。`cdk deploy --all` でも作り直さない。
 
 ## 開発ガイド
 

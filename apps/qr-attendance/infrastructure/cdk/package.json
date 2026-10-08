@@ -31,6 +31,7 @@
     "build:lambda:students:import": "cd ../../backend/functions/admin/students/import && npm install && npm run build",
     "cdk": "cdk",
     "deploy": "cdk deploy --all",
+    "deploy:prod": "bash scripts/deploy-prod.sh",
     "deploy:rds": "cdk deploy QrAttendanceRdsStack-dev",
     "deploy:cognito": "cdk deploy QrAttendanceCognitoStack-dev",
     "prebuild:lambda": "npm --prefix ../../backend run sync:response",
