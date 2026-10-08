@@ -1,0 +1,8 @@
+{
+  "name": "qr-attendance",
+  "private": true,
+  "description": "QR attendance app — workspace scripts (smoke-test, etc.)",
+  "scripts": {
+    "smoke-test": "bash scripts/smoke-test.sh"
+  }
+}

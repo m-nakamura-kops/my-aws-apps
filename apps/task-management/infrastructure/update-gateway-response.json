@@ -1,0 +1,10 @@
+[
+  {
+    "op": "replace",
+    "path": "/responseParameters/gatewayresponse.header.Access-Control-Allow-Origin",
+    "value": "'https://d37xuhikacb4ca.cloudfront.net'"
+  }
+]
+
+
+

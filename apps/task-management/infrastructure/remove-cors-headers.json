@@ -1,0 +1,17 @@
+[
+  {
+    "op": "remove",
+    "path": "/responseParameters/method.response.header.Access-Control-Allow-Origin"
+  },
+  {
+    "op": "remove",
+    "path": "/responseParameters/method.response.header.Access-Control-Allow-Methods"
+  },
+  {
+    "op": "remove",
+    "path": "/responseParameters/method.response.header.Access-Control-Allow-Headers"
+  }
+]
+
+
+

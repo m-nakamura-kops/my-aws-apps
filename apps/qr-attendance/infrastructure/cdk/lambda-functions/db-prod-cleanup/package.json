@@ -1,0 +1,10 @@
+{
+  "name": "db-prod-cleanup-lambda",
+  "version": "1.0.0",
+  "description": "Invoke-only: production DB cleanup inside VPC (transactional DELETE)",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.500.0",
+    "mysql2": "^3.9.0"
+  }
+}

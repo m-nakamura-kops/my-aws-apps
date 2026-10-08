@@ -1,0 +1,10 @@
+{
+  "name": "migrate-006-lambda",
+  "version": "1.0.0",
+  "description": "One-shot migration 006 inside VPC (invoke only, no API Gateway)",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.500.0",
+    "mysql2": "^3.9.0"
+  }
+}

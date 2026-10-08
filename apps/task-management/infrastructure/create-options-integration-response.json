@@ -1,0 +1,14 @@
+{
+  "statusCode": "200",
+  "responseParameters": {
+    "method.response.header.Access-Control-Allow-Origin": "'https://d37xuhikacb4ca.cloudfront.net'",
+    "method.response.header.Access-Control-Allow-Methods": "'GET,POST,PUT,DELETE,OPTIONS'",
+    "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+  },
+  "responseTemplates": {
+    "application/json": ""
+  }
+}
+
+
+
